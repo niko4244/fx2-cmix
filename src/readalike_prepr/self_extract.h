@@ -6,6 +6,12 @@
 
 #include <string>
 
+// malloc_trim() is a glibc/Linux extension; no-op on other platforms
+// (MinGW/Windows, macOS) where it doesn't exist.
+#if !defined(__linux__) || !defined(__GLIBC__)
+#define malloc_trim(pad) ((void)0)
+#endif
+
 struct HeaderInfo {
   int dict_size;
   int new_article_order_size;
