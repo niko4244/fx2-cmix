@@ -4,7 +4,7 @@
 
 #include "ppmd.h"
 #include <cstring>
-#include <sys/mman.h>
+#include "mman_shim.h"
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -30,7 +30,12 @@ typedef unsigned long long qword;
 // This will reduce RAM usage, but will be slower as well. *Warning*: this will
 // write a *lot* of data to disk, so can reduce the lifespan of SSDs. Not
 // recommended for normal usage.
-bool mmap_to_disk = true;
+// TODO(hutter-prize phase 0->3): the mman_shim.h Win32 mmap() shim compiles
+// but is not yet validated end-to-end; disabled here (matches the
+// "recommended" default per the comment above) until it's debugged and
+// confirmed correct. Full enwik9-scale runs need this back on to respect the
+// <10GB RAM budget -- revisit before any full-scale submission run.
+bool mmap_to_disk = false;
 qword mmap_size;
 static constexpr char mmap_path[] = "ppm.temp";
 

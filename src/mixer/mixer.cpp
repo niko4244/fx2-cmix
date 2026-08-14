@@ -5,7 +5,9 @@
 #include <numeric>
 #include <utility>
 #include <math.h>
-#include <sys/resource.h>
+#ifdef __linux__
+#include <sys/resource.h>  // unused in this file, kept for parity with upstream on Linux
+#endif
 Mixer::Mixer(const std::valarray<float>& inputs,
     const std::valarray<float>& extra_inputs,
     const unsigned long long& context, float learning_rate,
