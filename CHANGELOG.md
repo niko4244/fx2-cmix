@@ -57,8 +57,11 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
     flags the delta as not reliable below ~5% — the channel now
     self-audits instead of silently presenting a noisy number as truth.
     Revalidation on identical code (CHANGELOG-only pushes): the first
-    probe measured **-1.2%** with a flagged 7.4% HEAD spread — see below
-    for the second probe's result.
+    probe measured **-1.2%** with a flagged 7.4% HEAD spread (delta not
+    trustworthy), and the second, clean probe (0.5%/0.6% spreads)
+    measured **-0.7%**. Clean min-of-3 runs now resolve deltas to roughly
+    ±0.5-1% — below the old ±1.5% floor — and noisy runs say so instead
+    of presenting a misleading number.
   - **Benchmark default path validated**: the `1a792fa` push exercised the
     no-override fallback end-to-end (no grep-under-`set -euo pipefail`
     trap, unlike the identity job's pre-fix bug) and measured **-0.6%**
