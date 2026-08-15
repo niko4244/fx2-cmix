@@ -241,10 +241,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y make binutils
 
-      - name: Build production binary
+      # DEBUG=1 keeps -O3 (identical codegen) but leaves symbols in, so the
+      # LSTM functions can be located by name in the disassembly.
+      - name: Build production binary (DEBUG=1, symbols kept)
         run: |
           set -euo pipefail
-          make cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
+          make cmix MARCH=core-avx2 DEBUG=1 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
 
       - name: Dump LSTM reduction codegen
         run: |
