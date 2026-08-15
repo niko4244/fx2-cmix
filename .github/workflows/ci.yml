@@ -180,10 +180,26 @@ jobs:
             echo "pre-fix try $i failed (known PPMd remap crash)"
           done
           if [ "$ok" -ne 1 ]; then
-            echo "PRE-FIX BUILD CRASHED 6/6 — PPMd remap bug reproduced on unfixed code; neutrality inconclusive, fix confirmed necessary"
-            exit 0
+            echo "PRE-FIX BUILD CRASHED 6/6 — PPMd remap bug reproduced on unfixed code"
           fi
-          set -e
-          cmp /tmp/fixed.bin /tmp/old.bin \
-            && echo "PASS: PPMd fix is byte-neutral (identical compressed output)" \
-            || { echo "FAIL: compressed output differs — the fix changed behavior"; exit 1; }
+          if [ "$ok" -eq 1 ]; then
+            set -e
+            cmp /tmp/fixed.bin /tmp/old.bin \
+              && echo "PASS: PPMd fix is byte-neutral (identical compressed output)" \
+              || { echo "FAIL: compressed output differs — the fix changed behavior"; exit 1; }
+          else
+            # The remap makes the pre-fix build unusable here, so prove
+            # byte-identity with mmap_to_disk off on BOTH commits (same
+            # code paths, no remap in either).
+            set -e
+            echo "Rebuilding both commits with mmap_to_disk off for a byte-identity comparison..."
+            make -C /tmp/old clean
+            make -C /tmp/old cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000 -DMMAP_TO_DISK_DEFAULT=false" -j2
+            /tmp/old/cmix -n prof_input/input /tmp/old_off.bin
+            make clean
+            make cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000 -DMMAP_TO_DISK_DEFAULT=false" -j2
+            ./cmix -n prof_input/input /tmp/fixed_off.bin
+            cmp /tmp/fixed_off.bin /tmp/old_off.bin \
+              && echo "PASS: pre-fix and fixed builds are byte-identical (mmap_to_disk off)" \
+              || { echo "FAIL: byte-identity check failed"; exit 1; }
+          fi
