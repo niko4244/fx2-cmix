@@ -70,6 +70,42 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
     earlier +1.5% observation.
 
 ### Changed
+- **Third gprof pass on the current tree** (`-n` on `prof_input/input2`,
+  manual profile job, run `31894478917`). Re-ranking the remaining
+  non-LSTM targets after the miss-path and GetContextData work settled:
+  - `Mixer::Mix` **12.0%** (29.2s, 178.7M calls) — still the single biggest
+    non-LSTM, but its self time is the weight dot products + squash, i.e.
+    the FP reductions that are policy-excluded (reassociation would change
+    bytes; the LSTM rewrite proved the trap). No safe slice identified.
+  - `Predictor::Predict` **7.1%** self / **23.2%** with children — the
+    per-bit driver; its subtree (Mix + all models) is the largest after the
+    LSTM. Self time includes the banked Logit inlining; restructuring the
+    dispatch order is byte-unsafe, so not a target.
+  - `fxcmv1::ContextMap2::mix3` **3.7%** (311M calls — the codebase's
+    highest call count), plus `ContextMap1::mix3` 1.6% and
+    `ContextMap::mix3` 1.3% → the **mix3 family ≈ 6.6%** (whole ContextMap
+    family ≈ 10%). All integer leaves (StateMap update + table lookups +
+    setter writes, zero child calls) — the largest *safe-category* (no FP
+    reductions) aggregate, though the always_inline experiment showed this
+    region is i-cache-sensitive, so any change needs the same-run
+    benchmark.
+  - `Mixer1::p1` **2.7%** + `Mixer1::update` 0.6% — integer leaf, second-
+    stage mixer; safe-category but small.
+  - `update1` 1.3% + `SSE_sh::M_T1::M_Estimate` 1.2% — SSE chain,
+    integer, leaf-ish.
+  - PPMD (~2.2% across `ConvertSQ`, `processSymbol2_T`, `CreateSuccessors`)
+    — memory-bound on its heap structures; the remap fix was about the
+    crash, not speed.
+  - **Settled, not targets**: `E1/E/E::get` ≈ 9.3% (out-of-line wins,
+    miss path tightened, both inlining directions measured and rejected),
+    `Mixer::Perceive` 3.9% (rewrite landed), `GetContextData` 2.2%
+    (slot-map landed — held at ~2.2% vs 3.2% pre-change). LSTM ≈ 41%
+    remains excluded by policy.
+  - **Bottom line**: the safe-speedup well is largely tapped. Above the
+    settled/optimized functions, the remaining surface is `Mix` (blocked
+    by FP policy) plus a long tail of 1-4% integer leaves whose expected
+    yield is small and i-cache-risky. The one big lever left is the LSTM
+    (~41%), still blocked unless a bit-exact restructure is found.
 - **Second gprof pass on the current tree** (`-n` on `prof_input/input2`, via
   the new manual profile job). LSTM still dominates (~55%, its reductions
   are excluded from optimization work by policy — they cannot be restructured
