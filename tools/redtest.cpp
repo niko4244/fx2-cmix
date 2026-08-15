@@ -145,8 +145,8 @@ static float new_sqsum(const float* x) {
       // Mirror the production SumRevProduct accumulation pins: the four
       // chains are independent, so fast-math permutes which group lands in
       // which slot unless each add is routed through a volatile.
-#pragma clang fp reassociate(off) contract(off)
       {
+#pragma clang fp reassociate(off) contract(off)
         volatile __m256 v0 = _mm256_add_ps(g3, y0);
         y0 = v0;
         volatile __m256 v1 = _mm256_add_ps(g2, y1);

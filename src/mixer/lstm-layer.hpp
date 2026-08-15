@@ -75,8 +75,8 @@ inline float SumRevProduct(const float* a, const float* b, unsigned int n) {
       // the final rounded value). Route each add through a volatile
       // round-trip so the y0+=g3/y1+=g2/y2+=g1/y3+=g0 mapping is fixed by
       // construction (same class of bug as the combine re-pairing).
-#pragma clang fp reassociate(off) contract(off)
       {
+#pragma clang fp reassociate(off) contract(off)
         volatile __m256 v0 = _mm256_add_ps(g3, y0);
         y0 = v0;
         volatile __m256 v1 = _mm256_add_ps(g2, y1);
