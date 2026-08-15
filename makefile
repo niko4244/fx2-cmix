@@ -31,6 +31,15 @@ CPPFLAGS_PART-THAT-SHOULD-BE-FAST += -O3 -fdata-sections -ffunction-sections
 
 LFLAGS := -m64 -Wl,--gc-sections -std=c++17
 # DEBUG=1 keeps debug symbols (-g) and disables stripping (STRIPFLAG).
+# PROFILE=1 builds with -pg (gprof instrumentation); implies not stripped.
+ifdef PROFILE
+$(info PROFILE build: -pg added, binary not stripped)
+CPPFLAGS_PART-THAT-SHOULD-BE-FAST += -pg
+CPPFLAGS_PART-THAT-CAN-BE-SLOW    += -pg
+LFLAGS += -pg
+STRIPFLAG :=
+endif
+
 ifdef DEBUG
 $(info DEBUG build: -g added, binary not stripped)
 CPPFLAGS_PART-THAT-SHOULD-BE-FAST += -g

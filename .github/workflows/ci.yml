@@ -201,3 +201,35 @@ jobs:
               && echo "PASS: pre-fix and fixed builds are byte-identical (mmap_to_disk off)" \
               || { echo "FAIL: byte-identity check failed"; exit 1; }
           fi
+
+  # gprof profile of the full model on prof_input/input2 (~930 KB, the PGO
+  # training input). The top-self-time functions are the speedup candidates.
+  profile:
+    name: Profile (gprof) on prof_input/input2
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install clang-17, make
+        run: |
+          set -euo pipefail
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 17
+          sudo apt-get update
+          sudo apt-get install -y make binutils
+
+      - name: Build with gprof instrumentation (make PROFILE=1)
+        run: |
+          set -euo pipefail
+          make cmix MARCH=core-avx2 PROFILE=1 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
+
+      - name: Run profile pass on prof_input/input2
+        run: |
+          set -euo pipefail
+          ./cmix -n prof_input/input2 /tmp/profile_out.bin 2>&1 | tail -2
+
+      - name: gprof flat profile (top 30 by self time)
+        run: |
+          gprof ./cmix gmon.out 2>/dev/null | sed -n '/Flat profile:/,/Call graph/p' | head -40
