@@ -37,6 +37,18 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
   reconstructed LSTM produces byte-identical compressed output to
   `a45952b` (both 180642 bytes on the CI corpus).
 
+  **Speed measured** (same-run A/B via the benchmark override vs
+  `a45952b`): **-0.5%** (HEAD 16244 ms vs 16333 ms, reps 16244/16502/
+  16778 vs 16515/16333/16803, spreads 3.3%/2.9%, no reliability flag) —
+  neutral within noise: the compact reconstruction roughly breaks even
+  with the 10-copy-unrolled valarray loop. The durable win is not speed
+  but determinism: every FP reduction tree in the LSTM matvec is now
+  explicit (intrinsics + volatile-pinned partial sums + pragma'd tail),
+  so no future compiler/flag change can silently alter the compressed
+  output. `tools/redtest.cpp` now reports BIT-EQUAL for every probed
+  length (657, 457 [the real gate length], 201, 128, 40, 33, 32, 31, 17,
+  all-ones).
+
 ### Added
 - GitHub Actions CI (`.github/workflows/ci.yml`):
   - **Output identity (HEAD vs parent)** job: every push must produce
