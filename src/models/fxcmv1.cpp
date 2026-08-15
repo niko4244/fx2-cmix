@@ -1308,7 +1308,11 @@ union  E1 {  // hash element, 64 bytes
       // If not found, insert or replace lowest priority (not last).
       };
      U8 pad[B] ;
-      __attribute__ ((noinline)) U8* get(U16 ch,int keep) {
+      // No longer noinline: get() is called ~100M times per run from the
+      // byte-context loops, and the call overhead is measurable (gprof:
+      // ~4.7% self time). Inlining is semantics-preserving — identical
+      // arithmetic and memory access — so compressed output is unchanged.
+      U8* get(U16 ch,int keep) {
 
   if (chk[last&15]==ch) return &bh[last&15][0];
   int b=0xffff, bi=0;

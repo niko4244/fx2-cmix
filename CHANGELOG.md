@@ -18,6 +18,25 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
     can re-profile the current tree on demand.
 
 ### Changed
+- **Second gprof pass on the current tree** (`-n` on `prof_input/input2`, via
+  the new manual profile job). LSTM still dominates (~55%, its reductions
+  are excluded from optimization work by policy — they cannot be restructured
+  byte-identically). Next non-LSTM targets and what was done:
+  - `Mixer::Perceive` (~2.6% + hidden allocation/copy cost, 178.7M calls):
+    the valarray expressions `weights -= update * inputs_` allocate
+    temporaries and make a second pass, and the read-modify-write loop
+    cannot auto-vectorize because clang can't prove `weights` and `inputs`
+    don't alias. Rewritten as direct per-element updates with
+    `__restrict__` pointers and `#pragma clang fp contract(off)` — same
+    two-rounding arithmetic as the valarray version (no FMA fusion), so
+    compressed output is byte-identical, but now single-pass, allocation-
+    free, and vectorizable.
+  - `fxcmv1::E1::get` (~4.7%, 102M calls): dropped the `noinline` attribute
+    so the byte-context loops can fold the call overhead. Inlining is
+    semantics-preserving; output unchanged.
+  - `Mixer::Mix` (9.4%) left untouched: its dot products are pure reads,
+    already auto-vectorized under `-ffp-model=fast`; any manual
+    restructuring risks reassociating the reduction.
 - **CI trimmed** now that the PPMd heap-remap crash is fixed and proven
   byte-neutral: dropped the gdb/debug backtrace probe step (its job —    catching the flaky crash — is done). The Linux job now runs real
   lossless round-trips (`-n`, `-c`, and dictionary paths) instead of the

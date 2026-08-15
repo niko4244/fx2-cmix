@@ -91,9 +91,32 @@ void Mixer::Perceive(int bit) {
   } else {
     data = GetContextData();
   }
-  
-  data->weights -= update * inputs_;
-  data->extra_weights -= update * extra_inputs_vec_[std::slice(0,extra_inputs_size_,1)];
+
+  // Replace the valarray expressions (`weights -= update * inputs_`), which
+  // allocate a temporary per call and make a second pass, with direct
+  // per-element updates. fp contract(off) keeps the exact two-rounding
+  // semantics of the valarray version (t = update*inputs[i], then
+  // weights[i] -= t) — no FMA fusion — and __restrict__ lets clang
+  // vectorize the read-modify-write loop without changing any element's
+  // value. Byte-identical output, single pass, no temporaries.
+  float* __restrict__ weights = &data->weights[0];
+  const float* __restrict__ inputs = &inputs_[0];
+  const size_t input_count = inputs_.size();
+  {
+#pragma clang fp contract(off)
+    for (size_t i = 0; i < input_count; ++i) {
+      weights[i] -= update * inputs[i];
+    }
+  }
+  const size_t extra_count = extra_inputs_size_;
+  if (extra_count > 0) {
+    float* __restrict__ extra_weights = &data->extra_weights[0];
+    const float* __restrict__ extra_inputs = &extra_inputs_vec_[0];
+#pragma clang fp contract(off)
+    for (size_t i = 0; i < extra_count; ++i) {
+      extra_weights[i] -= update * extra_inputs[i];
+    }
+  }
  /*if ((data->steps & 1023) == 0) {
     data->weights *= 1.0f - 3.0e-6f;
     data->extra_weights *= 1.0f - 3.0e-6f;
