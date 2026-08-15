@@ -20,8 +20,12 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
     only the profile job.
   - **Profiling caveat documented**: cross-run comparisons on shared GitHub
     runners are unreliable — a re-profile of *unchanged* code showed the
-    LSTM dropping 66s → 37s (runner variance), so speedups are measured
-    per-call, never by raw totals across runs.
+    LSTM dropping 66s → 37s (runner variance), and per-call noise on
+    unchanged functions spans ±25-59% (e.g. `Lstm::Perceive` -50%, `E1::get`
+    +59% in the same pair of runs; round-trip wall-clock varied 117s vs
+    125s for byte-identical code). Speedups are judged by mechanism,
+    within-run share, and byte-identity; exact percentages need a
+    same-machine A/B (e.g. `verify_enwik9.sh` on a fixed box).
   - **CI bug fixed**: the output-identity "Determine comparison baseline"
     step died under `set -euo pipefail` whenever a commit message had no
     `Identity-baseline:` line (`grep` exits 1 on no match). Masked by
@@ -54,6 +58,14 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
     across untouched functions — classic i-cache damage in this
     i-cache-sensitive codebase. The out-of-line version wins; both changes
     reverted (final state = original `noinline`).
+  - `Mixer::GetContextData` (2.5-3.2%, 178.7M calls): the emhash6 map held
+    full `ContextData` objects as values, so every probe touched scattered
+    ~2KB buckets across a ~20MB working set. The map now stores only
+    context → slot indices (~16B buckets, cache-resident) with the weight
+    vectors in a parallel `std::vector` touched only on a hit — a ~100×
+    reduction of the probe working set. Identical lookup semantics and the
+    same 10000-context fallback threshold (verified byte-identical by the
+    output-identity job). Within-run gprof: 3.23% → 2.13%.
   - `Mixer::Mix` (9.4%) left untouched: its dot products are pure reads,
     already auto-vectorized under `-ffp-model=fast`; any manual
     restructuring risks reassociating the reduction.
