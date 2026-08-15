@@ -149,9 +149,15 @@ static float new_sqsum(const float* x) {
     }
     {
 #pragma clang fp reassociate(off) contract(off)
-      __m256 a0 = _mm256_add_ps(y1, y0);
-      a0 = _mm256_add_ps(y2, a0);
-      a0 = _mm256_add_ps(y3, a0);
+      // Mirror the production SumRevProduct: partial sums pinned through
+      // volatile round-trips (fast-math re-pairs the combine in the big
+      // function even when the pragma holds standalone).
+      volatile __m256 v = _mm256_add_ps(y1, y0);
+      __m256 a0 = v;
+      v = _mm256_add_ps(y2, a0);
+      a0 = v;
+      v = _mm256_add_ps(y3, a0);
+      a0 = v;
       __m128 xv = _mm_add_ps(_mm256_castps256_ps128(a0),
                              _mm256_extractf128_ps(a0, 1));
       xv = _mm_add_ps(xv, _mm_shuffle_pd(xv, xv, 0x1));
@@ -269,11 +275,14 @@ static void old_chain4(float* o, const float* l, const float* in,
 static void new_chain4(float* o, const float* l, const float* in,
                        const float* e, const float* f, const float* g) {
 #pragma clang fp reassociate(off) contract(off)
+  // Mirror the production chain 4: intermediates pinned through volatiles
+  // so fast-math cannot re-pair ((l-in)*e)*f)*ig into ((l-in)*e)*(f*ig).
   for (int j = 0; j < N; ++j) {
     float t = l[j] - in[j];
-    t = t * e[j];
-    t = t * f[j];
-    o[j] = t * g[j];
+    volatile float v1 = t * e[j];
+    t = v1 * f[j];
+    volatile float v2 = t;
+    o[j] = v2 * g[j];
   }
 }
 
