@@ -254,7 +254,7 @@ jobs:
       - name: Test clang-17 reduction semantics
         run: |
           set -euo pipefail
-          clang++-17 -O3 -march=core-avx2 -ffp-model=fast -std=c++17 tools/redtest.cpp -o /tmp/redtest
+          clang++-17 -O3 -march=core-avx2 -ffp-model=fast -std=c++17 -DUPDATE_LIMIT=3000 tools/redtest.cpp -o /tmp/redtest
           /tmp/redtest
           # The harness's own codegen: how does clang structure the old
           # valarray-style loop vs the intrinsic reconstruction?
