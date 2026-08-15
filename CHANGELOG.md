@@ -14,8 +14,20 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
   - **Windows (MinGW clang)** job: builds under MSYS2/MINGW64 and runs the
     same round-trip tests, then rebuilds with `mmap_to_disk` forced on to
     exercise the Win32 mmap shim end-to-end.
+  - **PPMd fix output-neutrality** job: builds the pre-fix commit
+    (`2eeda28^`, which has the unsafe heap remap) and fixed HEAD with
+    identical flags, compresses the same input, and requires byte-identical
+    output — empirical proof the fix is content-transparent. If the pre-fix
+    build crashes (its known bug), that is reported instead of failing.
+- `verify_enwik9.sh` — turnkey full-scale verification: downloads canonical
+  `enwik9`, PGO-builds like the submission, runs the full `-e` pipeline and
+  the self-extracting archive, and verifies the restored file against the
+  canonical MD5/SHA-1; optional cross-check against the official archive.
+- `docs/ENWIK9_VERIFICATION.md` — the full-scale procedure, canonical
+  enwik9 checksums, expected outputs, and resource requirements.
 - `CHANGELOG.md` — this file.
-- README: CI badge and a short Development section.
+- README: CI badge, a short Development section, and the corrected
+  decompressor output filename (`enwik9_uncompressed`).
 
 ### Fixed
 - `src/models/ppmd.cpp`: removed the periodic PPM heap `munmap`/`mmap`

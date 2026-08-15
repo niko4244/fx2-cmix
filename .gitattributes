@@ -1,0 +1,2 @@
+# Shell scripts are executed on Linux; they must never be CRLF.
+*.sh text eol=lf

@@ -23,7 +23,8 @@ Prize awarded on October 8, 2024. http://prize.hutter1.net/
   Windows until the `mman_shim.h` shim is validated at full scale. Override
   with `-DMMAP_TO_DISK_DEFAULT=0/1` (see `src/models/ppmd.cpp`).
 * **Full-scale validation** (the real enwik9 run, ~65 h / 16 GB RAM) is not
-  part of CI; use `build_and_construct_comp.sh` on a suitable machine.
+  part of CI; run `./verify_enwik9.sh` on a suitable machine (see
+  `docs/ENWIK9_VERIFICATION.md` for the procedure and canonical checksums).
 * See `CHANGELOG.md` for a running log of all changes.
 
 # Submission Description
@@ -184,7 +185,7 @@ cmix -e <PATH_TO_ENWIK9> enwik9.comp
 `enwik9.comp` is used to store intermediate data output. The final decompressor will be created as a file named `archive9`.
 
 # Running fx2-cmix decompressor
-The compressor is expected to output an executable file named `archive9` in the same directory (`./run`). The file `archive9` when executed is expected to reproduce the original enwik9 as a file named `enwik9_restored`. The executable file `archive9` should be launched without argments from the directory containing it.
+The compressor is expected to output an executable file named `archive9` in the same directory (`./run`). The file `archive9` when executed is expected to reproduce the original enwik9 as a file named `enwik9_uncompressed`. The executable file `archive9` should be launched without argments from the directory containing it. See `docs/ENWIK9_VERIFICATION.md` and `verify_enwik9.sh` for a turnkey full-scale verification against the canonical enwik9 checksums.
 ```bash
 cd ./run
 ./archive9

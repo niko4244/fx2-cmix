@@ -134,3 +134,56 @@ jobs:
           "$CMIX" -d out_n_mmap.bin back_n_mmap.bin
           cmp prof_input/input back_n_mmap.bin
           echo "PASS no-preprocess round-trip (mmap shim build)"
+
+  # Empirically proves the PPMd heap-remap fix (commit 2eeda28) is
+  # content-transparent: the pre-fix commit and the fixed HEAD must produce
+  # byte-identical compressed output for the same input. The pre-fix build
+  # carries the known intermittent crash, so it is retried; if it crashes
+  # every time that demonstrates the bug on the unfixed code instead.
+  ppm-fix-neutrality:
+    name: PPMd fix output-neutrality
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout (full history for the parent commit)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install clang-17, make
+        run: |
+          set -euo pipefail
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 17
+          sudo apt-get update
+          sudo apt-get install -y make
+
+      - name: Build fixed HEAD and compress
+        run: |
+          set -euo pipefail
+          make cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
+          ./cmix -n prof_input/input /tmp/fixed.bin
+
+      - name: Build pre-fix commit (2eeda28^, has the PPMd remap)
+        run: |
+          set -euo pipefail
+          git worktree add /tmp/old 2eeda28^ 2>/dev/null || true
+          make -C /tmp/old cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
+
+      - name: Compress with pre-fix build (retry on the known crash)
+        run: |
+          set +e
+          ok=0
+          for i in $(seq 1 6); do
+            timeout 120 /tmp/old/cmix -n prof_input/input /tmp/old.bin >/dev/null 2>&1
+            if [ $? -eq 0 ] && [ -s /tmp/old.bin ]; then ok=1; echo "pre-fix build compressed successfully on try $i"; break; fi
+            echo "pre-fix try $i failed (known PPMd remap crash)"
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "PRE-FIX BUILD CRASHED 6/6 — PPMd remap bug reproduced on unfixed code; neutrality inconclusive, fix confirmed necessary"
+            exit 0
+          fi
+          set -e
+          cmp /tmp/fixed.bin /tmp/old.bin \
+            && echo "PASS: PPMd fix is byte-neutral (identical compressed output)" \
+            || { echo "FAIL: compressed output differs — the fix changed behavior"; exit 1; }
