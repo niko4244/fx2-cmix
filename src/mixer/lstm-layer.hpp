@@ -69,10 +69,23 @@ inline float SumRevProduct(const float* a, const float* b, unsigned int n) {
           _mm256_castps_pd(_mm256_shuffle_ps(g2, g2, 0x1b)), 0x4e));
       g3 = _mm256_castpd_ps(_mm256_permute4x64_pd(
           _mm256_castps_pd(_mm256_shuffle_ps(g3, g3, 0x1b)), 0x4e));
-      y0 = _mm256_add_ps(g3, y0);
-      y1 = _mm256_add_ps(g2, y1);
-      y2 = _mm256_add_ps(g1, y2);
-      y3 = _mm256_add_ps(g0, y3);
+      // The four accumulator chains are independent, so fast-math can
+      // permute WHICH group lands in WHICH slot (observed in-context:
+      // y1/y2/y3 held the wrong groups, changing the partial-sum tree and
+      // the final rounded value). Route each add through a volatile
+      // round-trip so the y0+=g3/y1+=g2/y2+=g1/y3+=g0 mapping is fixed by
+      // construction (same class of bug as the combine re-pairing).
+#pragma clang fp reassociate(off) contract(off)
+      {
+        volatile __m256 v0 = _mm256_add_ps(g3, y0);
+        y0 = v0;
+        volatile __m256 v1 = _mm256_add_ps(g2, y1);
+        y1 = v1;
+        volatile __m256 v2 = _mm256_add_ps(g1, y2);
+        y2 = v2;
+        volatile __m256 v3 = _mm256_add_ps(g0, y3);
+        y3 = v3;
+      }
     }
     {
 #pragma clang fp reassociate(off) contract(off)

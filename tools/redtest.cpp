@@ -142,10 +142,20 @@ static float new_sqsum(const float* x) {
           _mm256_castps_pd(_mm256_shuffle_ps(g2, g2, 0x1b)), 0x4e));
       g3 = _mm256_castpd_ps(_mm256_permute4x64_pd(
           _mm256_castps_pd(_mm256_shuffle_ps(g3, g3, 0x1b)), 0x4e));
-      y0 = _mm256_add_ps(g3, y0);
-      y1 = _mm256_add_ps(g2, y1);
-      y2 = _mm256_add_ps(g1, y2);
-      y3 = _mm256_add_ps(g0, y3);
+      // Mirror the production SumRevProduct accumulation pins: the four
+      // chains are independent, so fast-math permutes which group lands in
+      // which slot unless each add is routed through a volatile.
+#pragma clang fp reassociate(off) contract(off)
+      {
+        volatile __m256 v0 = _mm256_add_ps(g3, y0);
+        y0 = v0;
+        volatile __m256 v1 = _mm256_add_ps(g2, y1);
+        y1 = v1;
+        volatile __m256 v2 = _mm256_add_ps(g1, y2);
+        y2 = v2;
+        volatile __m256 v3 = _mm256_add_ps(g0, y3);
+        y3 = v3;
+      }
     }
     {
 #pragma clang fp reassociate(off) contract(off)
