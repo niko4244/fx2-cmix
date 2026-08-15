@@ -36,6 +36,13 @@ class Mixer {
   unsigned long long /*max_steps_,*/ steps_;
   emhash6::HashMap<unsigned int, ContextData> context_map_;
   ContextData context_base_;
+  // Mix() and Perceive() are called with the same context_ within one bit
+  // (contexts only change in ContextManager::UpdateContexts, which runs after
+  // the mixer Perceive loop). Cache the resolved ContextData* from Mix() so
+  // Perceive() can skip the second hash lookup. Stale only across bits, where
+  // it is simply re-resolved by the next Mix() call.
+  ContextData* cached_data_ = nullptr;
+  unsigned long long cached_context_ = 0;
 };
 
 #endif

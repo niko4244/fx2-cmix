@@ -8,6 +8,30 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
 
 ### Added
 - GitHub Actions CI (`.github/workflows/ci.yml`):
+  - **Output identity (HEAD vs parent)** job: every push must produce
+    byte-identical compressed output to its parent commit (same platform,
+    same flags). Guards all "safe speedup" work — an optimization that
+    changes the compressed bytes fails CI.
+
+### Changed
+- **Performance (byte-identical, verified by CI):** gprof on
+  `prof_input/input2` showed ~30% of runtime in the LSTM (valarray
+  temporary churn), ~14% in out-of-line `Sigmoid::Logit` +
+  `MixerInput::SetInput` (called ~num_models times per bit), and ~10% in
+  `Mixer::Mix`/`GetContextData` (double hash lookup per bit):
+  - `Sigmoid::Logit` and the `MixerInput` setters are now inline in their
+    headers (identical arithmetic, call overhead removed).
+  - `Mixer::Mix` caches the resolved `ContextData*`; `Perceive` reuses it
+    for the same bit instead of a second hash lookup (contexts only change
+    in `UpdateContexts`, after the mixer Perceive loop).
+  - LSTM `Adam`, `ForwardPass`, `BackwardPass`, `Perceive`, and `Predict`
+    rewritten from valarray expression temporaries to scalar loops with
+    identical per-element operation order (same reductions, same rounding).
+  - All of the above are verified byte-identical to the parent commit by
+    the new output-identity CI job.
+
+### Added
+- GitHub Actions CI (`.github/workflows/ci.yml`):
   - **Linux (clang-17)** job: builds `cmix` and `remap`, then verifies
     lossless round-trips on `prof_input/input` — both with no preprocessing
     (`-n`) and with the full preprocess + dictionary path (`-c`/`-d`).

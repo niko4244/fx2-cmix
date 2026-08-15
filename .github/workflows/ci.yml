@@ -233,3 +233,44 @@ jobs:
       - name: gprof flat profile (top 30 by self time)
         run: |
           gprof ./cmix gmon.out 2>/dev/null | sed -n '/Flat profile:/,/Call graph/p' | head -40
+
+  # Every push must produce byte-identical compressed output to its parent
+  # commit (same platform, same flags). Guards the "safe speedups" work: any
+  # optimization that changes the compressed bytes fails CI and is reverted.
+  output-identity:
+    name: Output identity (HEAD vs parent)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout (full history for the parent commit)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install clang-17, make
+        run: |
+          set -euo pipefail
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 17
+          sudo apt-get update
+          sudo apt-get install -y make
+
+      - name: Build HEAD and compress prof_input/input2
+        run: |
+          set -euo pipefail
+          make cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
+          ./cmix -n prof_input/input2 /tmp/head.bin 2>&1 | tail -1
+
+      - name: Build parent commit and compress
+        run: |
+          set -euo pipefail
+          git worktree add /tmp/old HEAD~1 2>/dev/null || true
+          make -C /tmp/old cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
+          /tmp/old/cmix -n prof_input/input2 /tmp/parent.bin 2>&1 | tail -1
+
+      - name: Compare compressed bytes
+        run: |
+          set -euo pipefail
+          cmp /tmp/head.bin /tmp/parent.bin \
+            && echo "PASS: HEAD and parent produce byte-identical compressed output" \
+            || { echo "FAIL: compressed output differs from parent — revert or fix"; exit 1; }

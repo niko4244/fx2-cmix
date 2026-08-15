@@ -44,6 +44,8 @@ ContextData* Mixer::GetContextData() {
 
 float Mixer::Mix() {
   ContextData* data = GetContextData();
+  cached_data_ = data;
+  cached_context_ = context_;
   float p = 0;
   for (int i = 0; i < inputs_.size(); ++i) {
     p += inputs_[i] * data->weights[i];
@@ -79,7 +81,16 @@ void Mixer::Perceive(int bit) {
   }
    // ++data->steps;
   update = decay * update;
-  ContextData* data = GetContextData();
+  // Reuse the ContextData* resolved by the Mix() call for this same bit
+  // (same context_, since contexts only change in UpdateContexts which runs
+  // after the mixer Perceive loop). Falls back to a lookup if mixed without
+  // a preceding Mix() call.
+  ContextData* data;
+  if (cached_data_ != nullptr && context_ == cached_context_) {
+    data = cached_data_;
+  } else {
+    data = GetContextData();
+  }
   
   data->weights -= update * inputs_;
   data->extra_weights -= update * extra_inputs_vec_[std::slice(0,extra_inputs_size_,1)];
