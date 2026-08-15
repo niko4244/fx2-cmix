@@ -31,56 +31,24 @@ jobs:
           make cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
           make remap MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000"
 
-      # Diagnostic run: measure peak RSS and capture a gdb backtrace if
-      # cmix crashes (it did at ~40% on the standard 7 GB runner).
-      - name: Round-trip diagnostics (-n, -c, dictionary)
+      # Real lossless round-trips (the PPMd heap-remap crash is fixed and
+      # byte-neutrality is guarded by the dedicated jobs below, so the old
+      # gdb/time-v probe steps were dropped).
+      - name: Round-trip tests (-n, -c, dictionary)
         run: |
-          set +e
-          sudo apt-get install -y gdb >/dev/null 2>&1
-          echo "=== free -h ==="; free -h
-          echo "=== -n: time -v ==="
-          /usr/bin/time -v ./cmix -n prof_input/input /tmp/out_n.bin 2>&1 \
-            | grep -E "Maximum resident|Elapsed|Exit status|Command being|Segmentation|bytes ->|bad_alloc" | tail -8
-          echo "=== -c (no dict, PGO path): time -v ==="
-          /usr/bin/time -v ./cmix -c prof_input/input /tmp/out_pgo.bin 2>&1 \
-            | grep -E "Maximum resident|Elapsed|Exit status|Segmentation|bytes ->|bad_alloc" | tail -8
-          echo "=== -c with dictionary: time -v ==="
-          /usr/bin/time -v ./cmix -c dictionary/english.dic prof_input/input /tmp/out_c.bin 2>&1 \
-            | grep -E "Maximum resident|Elapsed|Exit status|Segmentation|bytes ->|bad_alloc|Loaded" | tail -8
-          exit 0
-
-      # The crash observed in run #2 is flaky (reproduces under gdb, not in
-      # plain runs). Build with symbols (make DEBUG=1) and loop the test to
-      # catch it with a real backtrace.
-      - name: Debug build + flaky-crash backtrace
-        run: |
-          set +e
-          make clean
-          make cmix MARCH=core-avx2 DEBUG=1 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
-          echo "=== 8 plain runs: -n (flakiness + RSS probe) ==="
-          for i in $(seq 1 8); do
-            /usr/bin/time -v ./cmix -n prof_input/input /tmp/probe_$i.bin 2>&1 \
-              | grep -E "Exit status|Maximum resident" | tr -d '\t' | tr '\n' ' '; echo "(run $i)"
-          done
-          echo "=== 6 gdb runs: -n (backtrace + state) ==="
-          for i in $(seq 1 6); do
-            gdb -batch -ex "set pagination off" -ex run \
-              -ex "bt 10" \
-              -ex "frame 0" \
-              -ex "p counter_" \
-              -ex "p/x HeapStart" \
-              -ex "p/x UnitsStart" \
-              -ex "p/x MaxContext" \
-              -ex "p/x LoUnit" \
-              -ex "p/x HiUnit" \
-              -ex "p/x SubAllocatorSize" \
-              -ex "frame 4" \
-              -ex "p pos" \
-              --args ./cmix -n prof_input/input /tmp/gdb_$i.bin 2>&1 \
-              | grep -E "Program received|^#[0-9]+ |\$[0-9]+ =| = " | head -25
-            echo "(gdb run $i done)"
-          done
-          exit 0
+          set -euo pipefail
+          ./cmix -n prof_input/input /tmp/out_n.bin
+          ./cmix -d /tmp/out_n.bin /tmp/back_n.bin
+          cmp prof_input/input /tmp/back_n.bin
+          echo "PASS no-preprocess round-trip"
+          ./cmix -c prof_input/input /tmp/out_pgo.bin
+          ./cmix -d /tmp/out_pgo.bin /tmp/back_pgo.bin
+          cmp prof_input/input /tmp/back_pgo.bin
+          echo "PASS PGO-path round-trip"
+          ./cmix -c dictionary/english.dic prof_input/input /tmp/out_c.bin
+          ./cmix -d dictionary/english.dic /tmp/out_c.bin /tmp/back_c.bin
+          cmp prof_input/input /tmp/back_c.bin
+          echo "PASS dictionary round-trip"
 
   windows-mingw-build:
     name: Windows (MinGW clang) build + round-trip tests
@@ -202,41 +170,11 @@ jobs:
               || { echo "FAIL: byte-identity check failed"; exit 1; }
           fi
 
-  # gprof profile of the full model on prof_input/input2 (~930 KB, the PGO
-  # training input). The top-self-time functions are the speedup candidates.
-  profile:
-    name: Profile (gprof) on prof_input/input2
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install clang-17, make
-        run: |
-          set -euo pipefail
-          wget https://apt.llvm.org/llvm.sh
-          chmod +x llvm.sh
-          sudo ./llvm.sh 17
-          sudo apt-get update
-          sudo apt-get install -y make binutils
-
-      - name: Build with gprof instrumentation (make PROFILE=1)
-        run: |
-          set -euo pipefail
-          make cmix MARCH=core-avx2 PROFILE=1 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
-
-      - name: Run profile pass on prof_input/input2
-        run: |
-          set -euo pipefail
-          ./cmix -n prof_input/input2 /tmp/profile_out.bin 2>&1 | tail -2
-
-      - name: gprof flat profile (top 30 by self time)
-        run: |
-          gprof ./cmix gmon.out 2>/dev/null | sed -n '/Flat profile:/,/Call graph/p' | head -40
-
   # Every push must produce byte-identical compressed output to its parent
   # commit (same platform, same flags). Guards the "safe speedups" work: any
   # optimization that changes the compressed bytes fails CI and is reverted.
+  # (The one-off gprof profile job that drove this work was removed; run
+  # `make cmix PROFILE=1` locally to re-profile.)
   output-identity:
     name: Output identity (HEAD vs parent)
     runs-on: ubuntu-22.04

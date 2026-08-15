@@ -14,6 +14,14 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
     changes the compressed bytes fails CI.
 
 ### Changed
+- **CI trimmed** now that the PPMd heap-remap crash is fixed and proven
+  byte-neutral: dropped the gdb/debug backtrace probe step (its job —
+  catching the flaky crash — is done) and the one-off gprof profile job
+  (`make cmix PROFILE=1` still works locally). The Linux job now runs real
+  lossless round-trips (`-n`, `-c`, and dictionary paths) instead of the
+  compress-only time -v diagnostics. Jobs remaining: Linux round-trips,
+  Windows round-trips + binary artifact, PPMd-fix neutrality, output
+  identity — correctness guards only, no probes.
 - **Performance (byte-identical, verified by CI):** gprof on
   `prof_input/input2` showed ~30% of runtime in the LSTM (valarray
   temporary churn), ~14% in out-of-line `Sigmoid::Logit` +
@@ -25,8 +33,14 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
     for the same bit instead of a second hash lookup (contexts only change
     in `UpdateContexts`, after the mixer Perceive loop).
   - LSTM `Adam`, `ForwardPass`, `BackwardPass`, `Perceive`, and `Predict`
-    rewritten from valarray expression temporaries to scalar loops with
-    identical per-element operation order (same reductions, same rounding).
+    rewritten from valarray expression temporaries to scalar loops.
+  - These rewrites are byte-exact only with FP contraction disabled: the
+    merged scalar loops would have let clang contract `a*b+c` into a single
+    FMA (one rounding) where the original valarray expressions rounded each
+    intermediate into a heap temporary (two roundings). The rewritten loops
+    live in `#pragma clang fp contract(off)` helpers so they reproduce the
+    valarray's per-operation rounding exactly, while untouched scalar loops
+    (e.g. the LSTM matvec reductions) keep their original FMA contraction.
   - All of the above are verified byte-identical to the parent commit by
     the new output-identity CI job.
 
