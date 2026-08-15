@@ -147,6 +147,11 @@ template <class T> void alloc1(T*&data, int c,T*&ptr,const int align=16) {
 
 // Squash returns p = 1/(1 + exp(-d)), d scaled by 8 bits, p scaled by 12 bits
 short sqt[4095];
+// Precomputed (float)sqt[i] * conversion_factor for Inputs::add's model
+// prediction stream: the int->float convert + multiply are loop-invariant
+// per slot, so baking them into a table removes both from the 311M-call
+// mix3 hot path with bit-identical float results.
+float sqtf[4095];
 
 int squashc(int d ) {
     if (d < -2047)return 1;
@@ -192,7 +197,7 @@ struct alignas(64) Inputs{
             assert(ncount >= 0 && ncount <= S);
             assert(p>-2048 && p<2048);
             n[ncount++]=p;
-            AddPrediction(squash(p));
+            model_predictions[prediction_index++] = sqtf[p+2047];
         }
     };
 template <const int S >
@@ -4797,6 +4802,11 @@ inline Predictor::Predictor()  {
     for (int i=-2047; i<=2047; i++) {
         sqt[i+2047]=squashc(i);
     }
+    // Float squash table: (float)sqt[i]*conversion_factor, exact same
+    // arithmetic as AddPrediction(squash(p)) but hoisted out of the hot
+    // per-input path (bit-identical, see Inputs::add).
+    for (int i=0; i<4095; ++i)
+        sqtf[i]=(float)sqt[i]*conversion_factor;
 
     InitIlog();
     x.Init();

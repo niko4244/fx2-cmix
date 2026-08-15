@@ -189,6 +189,25 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
   - The kept changes are pure call-overhead/lookup reductions with no FP
     arithmetic change; the output-identity and PPMd-neutrality jobs verify
     them byte-identical against the pre-optimization baseline.
+- **mix3 hot-loop study (ContextMap2 311M / ContextMap1 155M /
+  ContextMap 119M calls, ≈6.6% combined):** audited `mix3`, the
+  `StateMap::set`/`update` it calls, and the `Inputs::add` setter for
+  safe (byte-identical) redundancy. Findings:
+  - The scan/set order and the prediction stream are hard constraints:
+    `mix3`'s branch order is load-bearing, and the outer mixer reads the
+    *entire* `model_predictions` array every bit (not just
+    `[0, prediction_index)`), so the "decremented" last add's value is
+    read and cannot be skipped.
+  - `StateMap::update` is already minimal (one load + shift + add +
+    store; `set` adds one dependent load) — no removable redundancy.
+  - One real micro-opt shipped: `Inputs::add` now writes
+    `sqtf[p+2047]` from a precomputed float squash table
+    (`sqtf[i] = (float)sqt[i]*conversion_factor`) instead of
+    `AddPrediction(squash(p))`. Removes the per-add int→float convert,
+    float multiply, and the two `squash` clamp branches from the
+    hottest call path; the float arithmetic is element-identical, and
+    every `add()` call site was verified to pass in-range `p` (clp'd
+    tables, constants, clamped `p1()`/`st>>2`/`length<<5`).
 
 ### Added
 - GitHub Actions CI (`.github/workflows/ci.yml`):
