@@ -159,18 +159,22 @@ int StartSubAllocator( qword SASize ) {
     mmap_size = t;
     int fd = open(mmap_path, O_RDWR | O_CREAT | O_TRUNC, (mode_t)0664);
     if(fd < 0){
+      perror("ppmd: open(mmap_path)");
       exit(EXIT_FAILURE);
     }
       
     if (lseek(fd, t, SEEK_SET) == -1) {
+      perror("ppmd: lseek");
       exit(EXIT_FAILURE);
     }
       
     if (write(fd, "", 1) == -1) {
+      perror("ppmd: write");
       exit(EXIT_FAILURE);
     }
     HeapStart = (byte*) mmap(NULL, t, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
     if(HeapStart == MAP_FAILED){
+      perror("ppmd: mmap");
       exit(EXIT_FAILURE);
     }
     close(fd);
@@ -1406,11 +1410,17 @@ void PPMD::ByteUpdate() {
   if (mmap_to_disk && counter_ % 20000 == 0) {
     int err = munmap(ppmd_model_->HeapStart, mmap_size);
     if(err != 0) {
+      perror("ppmd: munmap");
       exit(EXIT_FAILURE);
     }
     int fd = open(mmap_path, O_RDWR);
+    if (fd < 0) {
+      perror("ppmd: re-open(mmap_path)");
+      exit(EXIT_FAILURE);
+    }
     ppmd_model_->HeapStart = (byte*) mmap(NULL, mmap_size, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
     if(ppmd_model_->HeapStart == MAP_FAILED) {
+      perror("ppmd: re-mmap");
       exit(EXIT_FAILURE);
     }
     close(fd);

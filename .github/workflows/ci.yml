@@ -41,9 +41,6 @@ jobs:
           echo "=== -n: time -v ==="
           /usr/bin/time -v ./cmix -n prof_input/input /tmp/out_n.bin 2>&1 \
             | grep -E "Maximum resident|Elapsed|Exit status|Command being|Segmentation|bytes ->|bad_alloc" | tail -8
-          echo "=== -n: gdb backtrace ==="
-          gdb -batch -ex "set pagination off" -ex run -ex "bt 25" \
-            --args ./cmix -n prof_input/input /tmp/out_g.bin 2>&1 | tail -30
           echo "=== -c (no dict, PGO path): time -v ==="
           /usr/bin/time -v ./cmix -c prof_input/input /tmp/out_pgo.bin 2>&1 \
             | grep -E "Maximum resident|Elapsed|Exit status|Segmentation|bytes ->|bad_alloc" | tail -8
@@ -67,9 +64,9 @@ jobs:
           done
           echo "=== 6 gdb runs: -n (backtrace) ==="
           for i in $(seq 1 6); do
-            gdb -batch -ex "set pagination off" -ex run -ex "bt 30" \
+            gdb -batch -ex "set pagination off" -ex run -ex "bt 40" \
               --args ./cmix -n prof_input/input /tmp/gdb_$i.bin 2>&1 \
-              | grep -E "Program received|#[0-9]+ 0x|#[0-9]+ [a-zA-Z_]" | head -35
+              | grep -A 14 "Program received" | head -18
             echo "(gdb run $i done)"
           done
           exit 0
