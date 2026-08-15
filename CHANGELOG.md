@@ -6,6 +6,24 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
 
 ## [Unreleased] — dev branch
 
+### Changed
+- **LSTM matvec reconstructed BY CONSTRUCTION** (`lstm-layer.hpp`
+  `ForwardPass(NeuronLayer)`): replaced the valarray dot-product loop with
+  an explicit intrinsic sequence that reproduces clang-17's exact FP
+  operation tree. Derived from the disassembly of the production Linux
+  binary (new manual `disasm` job): 4×8-lane FMA accumulators over
+  32-element blocks, the `weights_[i][input_symbol]` seed fused into
+  accumulator lane 0, the horizontal reduce `(y1+y0)→(y3+y2)→t1+t0`,
+  `low128+high128`, the 64-bit-half-swap `vshufpd`+`add`, `vmovshdup`+
+  `vaddss` (i.e. `(s0+s2)+(s1+s3)`), then a scalar FMA tail. The tail
+  runs under `reassociate(off)` so fast-math cannot re-tree it.
+  Semantics of the emitted reduce were pinned empirically by
+  `tools/redtest.cpp` (new): clang's fast-math tree ≠ fixed-order FMA,
+  and a replica of the emitted tail matches clang's tree (the
+  `vshufpd x,x,1` with identical operands is a half-swap, not a copy).
+  Byte-exactness is gated by the identity job comparing against
+  `a45952b` (the pre-rewrite tree).
+
 ### Added
 - GitHub Actions CI (`.github/workflows/ci.yml`):
   - **Output identity (HEAD vs parent)** job: every push must produce
