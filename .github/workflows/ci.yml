@@ -170,11 +170,54 @@ jobs:
               || { echo "FAIL: byte-identity check failed"; exit 1; }
           fi
 
+  # Manual-only gprof profile (workflow_dispatch): never runs on normal
+  # pushes, so the trimmed workflow stays fast. Builds with PROFILE=1 (-pg)
+  # and reports the top self-time functions on prof_input/input2, so future
+  # "safe speedup" work always starts from fresh data on the current tree.
+  profile:
+    name: gprof profile (manual)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install clang-17, make, binutils
+        run: |
+          set -euo pipefail
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 17
+          sudo apt-get update
+          sudo apt-get install -y make binutils
+
+      - name: Build with gprof instrumentation (make PROFILE=1)
+        run: |
+          set -euo pipefail
+          make cmix MARCH=core-avx2 PROFILE=1 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
+
+      - name: Run profile pass on prof_input/input2
+        run: |
+          set -euo pipefail
+          ./cmix -n prof_input/input2 /tmp/profile_out.bin 2>&1 | tail -2
+
+      - name: gprof flat profile (top 35 by self time)
+        run: |
+          gprof ./cmix gmon.out 2>/dev/null | sed -n '/Flat profile:/,/Call graph/p' | head -45
+          gprof ./cmix gmon.out > /tmp/gprof_full.txt 2>/dev/null || true
+
+      - name: Upload full profile report
+        uses: actions/upload-artifact@v4
+        with:
+          name: gprof-report
+          path: /tmp/gprof_full.txt
+          if-no-files-found: error
+          retention-days: 14
+
   # Every push must produce byte-identical compressed output to its parent
   # commit (same platform, same flags). Guards the "safe speedups" work: any
   # optimization that changes the compressed bytes fails CI and is reverted.
-  # (The one-off gprof profile job that drove this work was removed; run
-  # `make cmix PROFILE=1` locally to re-profile.)
+  # (Re-profile on the current tree via the manual `profile` job above.)
   output-identity:
     name: Output identity (HEAD vs parent)
     runs-on: ubuntu-22.04

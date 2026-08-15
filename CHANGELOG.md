@@ -12,12 +12,14 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
     byte-identical compressed output to its parent commit (same platform,
     same flags). Guards all "safe speedup" work — an optimization that
     changes the compressed bytes fails CI.
+  - **gprof profile job (manual only)**: `workflow_dispatch`-triggered,
+    never runs on normal pushes. Builds with `PROFILE=1` and reports the
+    top self-time functions on `prof_input/input2`, so "safe speedup" work
+    can re-profile the current tree on demand.
 
 ### Changed
 - **CI trimmed** now that the PPMd heap-remap crash is fixed and proven
-  byte-neutral: dropped the gdb/debug backtrace probe step (its job —
-  catching the flaky crash — is done) and the one-off gprof profile job
-  (`make cmix PROFILE=1` still works locally). The Linux job now runs real
+  byte-neutral: dropped the gdb/debug backtrace probe step (its job —    catching the flaky crash — is done). The Linux job now runs real
   lossless round-trips (`-n`, `-c`, and dictionary paths) instead of the
   compress-only time -v diagnostics. Jobs remaining: Linux round-trips,
   Windows round-trips + binary artifact, PPMd-fix neutrality, output
