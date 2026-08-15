@@ -96,8 +96,13 @@ inline std::valarray<float>& Lstm::Perceive(unsigned int input) {
 //          if (i == input_history_[epoch]) error = output_[epoch][i] - 1;
 //          else error = output_[epoch][i];
           float error = (i == input_history_[epoch]) ? (output_[epoch][i] - 1) : output_[epoch][i];
+          // Elementwise FMA, pinned by construction: the emitted code is
+          // hidden[j] = fma(out[j], error, hidden[j]) (vfmadd213ss/ps), one
+          // rounding. The scalar form keeps the valarray's fast-math
+          // contraction explicit and compiler-independent.
           for (unsigned int j = 0; j < hidden_error_.size(); ++j) {
-            hidden_error_[j] += output_layer_[epoch][i][j + offset] * error;
+            hidden_error_[j] = __builtin_fmaf(
+                output_layer_[epoch][i][j + offset], error, hidden_error_[j]);
           }
         }
         int prev_epoch = epoch - 1;
@@ -116,7 +121,16 @@ inline std::valarray<float>& Lstm::Perceive(unsigned int input) {
 //    else error = output_[last_epoch][i];
     float error = (i == input) ? (output_[last_epoch][i] - 1) : output_[last_epoch][i];
     output_layer_[epoch_][i] = output_layer_[last_epoch][i];
-    output_layer_[epoch_][i] -= learning_rate_ * error * hidden_;
+    // Output-layer update pinned by construction: the emitted code is
+    // out[j] = fma(-(lr*error), hidden[j], out[j]) (vfnmadd213ss/ps) — one
+    // rounding, scale = lr*error computed as one mul first.
+    {
+      const float scale = learning_rate_ * error;
+      for (unsigned int j = 0; j < hidden_.size(); ++j) {
+        output_layer_[epoch_][i][j] = __builtin_fmaf(
+            -scale, hidden_[j], output_layer_[epoch_][i][j]);
+      }
+    }
   }
   return Predict(input);
 }
@@ -179,7 +193,51 @@ inline std::valarray<float>& Lstm::Predict(unsigned int input) {
       output_[epoch_][i] = expf(sum);
     }
   }
-  output_[epoch_] /= output_[epoch_].sum();
+  // Softmax normalization reconstructed BY CONSTRUCTION. The .sum() tree
+  // is seed-first: o[0] in lane 0, 4 accumulators over elements 1..M where
+  // M = (N-1)&~31, then a SEQUENTIAL scalar tail; the reduce is
+  // (y1+y0)+(y3+y2) pinned through a volatile round-trip (fast-math
+  // re-pairs the tree in register allocation, invisible to instruction
+  // diffs). The divide becomes the emitted 1/sum (vdivss) broadcast-mul.
+  {
+    const int n = (int)output_[epoch_].size();
+    const float* o = &output_[epoch_][0];
+    float sum;
+    if (n == 1) {
+      sum = o[0];
+    } else {
+      const int M = ((n - 1) & ~31);
+      __m256 y0 = _mm256_setzero_ps(), y1 = _mm256_setzero_ps();
+      __m256 y2 = _mm256_setzero_ps(), y3 = _mm256_setzero_ps();
+      y0 = _mm256_blend_ps(y0, _mm256_set1_ps(o[0]), 0x1);
+      for (int b = 0; b < M; b += 32) {
+        y0 = _mm256_add_ps(y0, _mm256_loadu_ps(o + b + 1));
+        y1 = _mm256_add_ps(y1, _mm256_loadu_ps(o + b + 9));
+        y2 = _mm256_add_ps(y2, _mm256_loadu_ps(o + b + 17));
+        y3 = _mm256_add_ps(y3, _mm256_loadu_ps(o + b + 25));
+      }
+      {
+#pragma clang fp reassociate(off) contract(off)
+        __m256 t0 = _mm256_add_ps(y1, y0);
+        __m256 t1 = _mm256_add_ps(y3, y2);
+        volatile __m256 v0 = t0, v1 = t1;
+        __m256 t2 = _mm256_add_ps(v1, v0);
+        __m128 x = _mm_add_ps(_mm256_castps256_ps128(t2),
+                              _mm256_extractf128_ps(t2, 1));
+        x = _mm_add_ps(x, _mm_shuffle_pd(x, x, 0x1));
+        x = _mm_add_ss(x, _mm_movehdup_ps(x));
+        sum = _mm_cvtss_f32(x);
+      }
+      {
+#pragma clang fp reassociate(off) contract(off)
+        for (int j = M + 1; j < n; ++j) sum += o[j];
+      }
+    }
+    {
+      const float inv = 1.0f / sum;
+      for (int j = 0; j < n; ++j) output_[epoch_][j] *= inv;
+    }
+  }
   int epoch = epoch_;
   ++epoch_;
   if (epoch_ == horizon_) epoch_ = 0;

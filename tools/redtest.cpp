@@ -294,7 +294,8 @@ static void chain_case(const char* tag, chainfn oldf, chainfn newf,
 }
 
 // ---- Adam: alpha (t<LIMIT: rsqrt+Newton; else: folded) ----
-static float old_alpha(float t, float lr) {
+// noinline so the disasm job can objdump these and compare their codegen.
+__attribute__((noinline)) static float old_alpha(float t, float lr) {
   float alpha;
   if (t < UPDATE_LIMIT) {
     alpha = lr * 0.1f / sqrt(5e-5f * t + 1.0f);
@@ -303,7 +304,7 @@ static float old_alpha(float t, float lr) {
   }
   return alpha;
 }
-static float new_alpha(float t, float lr) {
+__attribute__((noinline)) static float new_alpha(float t, float lr) {
   float alpha;
   if (t < UPDATE_LIMIT) {
 #pragma clang fp reassociate(off) contract(off)
@@ -320,7 +321,8 @@ static float new_alpha(float t, float lr) {
 }
 
 // ---- full Adam elementwise updates (m/v/w) at a fixed t ----
-static void old_adam(float* g, float* m, float* v, float* w, float lr, float t) {
+__attribute__((noinline)) static void old_adam(float* g, float* m, float* v,
+                                               float* w, float lr, float t) {
   float alpha = old_alpha(t, lr);
   for (int j = 0; j < N; ++j) {
     m[j] *= beta1;
@@ -336,7 +338,9 @@ static void old_adam(float* g, float* m, float* v, float* w, float lr, float t) 
     }
   }
 }
-static void new_adam(float* g, float* m, float* v, float* w, float lr, float t) {
+__attribute__((noinline)) static void new_adam(float* g, float* m,
+                                                  float* v, float* w,
+                                                  float lr, float t) {
   float alpha = new_alpha(t, lr);
   float den1, inv_den2;
   if (t < UPDATE_LIMIT) {

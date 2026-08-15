@@ -258,7 +258,7 @@ jobs:
           /tmp/redtest
           # The harness's own codegen: how does clang structure the old
           # valarray-style loop vs the intrinsic reconstruction?
-          objdump -d --no-show-raw-insn -M intel -C /tmp/redtest | awk '/^[0-9a-f]+ <.*>:$/ { sub(/^[0-9a-f]+ </,""); sub(/>:$/,""); if ($0 ~ /matvec/) show=1; else show=0 } show { print }'
+          objdump -d --no-show-raw-insn -M intel -C /tmp/redtest | awk '/^[0-9a-f]+ <.*>:$/ { sub(/^[0-9a-f]+ </,""); sub(/>:$/,""); if ($0 ~ /matvec/ || $0 ~ /_adam/ || $0 ~ /_alpha/) show=1; else show=0 } show { print }'
 
       - name: Dump LSTM reduction codegen
         run: |
@@ -276,7 +276,17 @@ jobs:
       - name: Dump rodata floats near the LSTM constants
         run: |
           set -euo pipefail
+          echo "===== HEAD rodata 391xx/392xx ====="
           objdump -s -j .rodata ./cmix | awk '/^ *391/ || /^ *392/ { print }'
+          # Also dump the ORIGINAL (identity-baseline) build's rodata: the
+          # LSTM Adam/LayerNorm Newton constants are folded literals whose
+          # exact values must be frozen by the reconstruction. The baseline
+          # commit carries the pre-reconstruction codegen.
+          echo "===== BASELINE a45952b rodata 391xx/392xx ====="
+          git fetch origin a45952b --depth=1
+          git worktree add --detach /tmp/base a45952b
+          make -C /tmp/base cmix MARCH=core-avx2 DEBUG=1 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
+          objdump -s -j .rodata /tmp/base/cmix | awk '/^ *391/ || /^ *392/ { print }'
 
       - name: Upload full disassembly
         uses: actions/upload-artifact@v4
