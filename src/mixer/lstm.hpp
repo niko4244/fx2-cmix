@@ -154,14 +154,10 @@ inline std::valarray<float>& Lstm::Predict(unsigned int input) {
     }
     output_[epoch_][i] = exp(sum);
   }
-  // Scalar loop replaces the valarray temp (output_[epoch_].sum()).
-  float sum_out = 0;
-  for (unsigned int i = 0; i < output_size_; ++i) {
-    sum_out += output_[epoch_][i];
-  }
-  for (unsigned int i = 0; i < output_size_; ++i) {
-    output_[epoch_][i] /= sum_out;
-  }
+  // Kept verbatim from the original: the sum reduction must keep its exact
+  // valarray form for byte-identical results (vectorized partial-sum trees
+  // can differ for a manually written loop).
+  output_[epoch_] /= output_[epoch_].sum();
   int epoch = epoch_;
   ++epoch_;
   if (epoch_ == horizon_) epoch_ = 0;

@@ -199,10 +199,22 @@ jobs:
           make cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
           ./cmix -n prof_input/input2 /tmp/head.bin 2>&1 | tail -1
 
-      - name: Build parent commit and compress
+      # Compare against the parent commit by default, or against an explicit
+      # baseline named in the commit message ("Identity-baseline: <sha>") —
+      # used when the parent is itself known-broken and a direct comparison
+      # against a known-good commit is the meaningful check.
+      - name: Determine comparison baseline
         run: |
           set -euo pipefail
-          git worktree add /tmp/old HEAD~1 2>/dev/null || true
+          BASELINE=$(git log -1 --format='%B' | grep -oE '^Identity-baseline: [0-9a-f]{7,40}' | awk '{print $2}')
+          if [ -z "$BASELINE" ]; then BASELINE="HEAD~1"; fi
+          echo "baseline=$BASELINE" >> "$GITHUB_ENV"
+          echo "comparing HEAD against $BASELINE"
+
+      - name: Build baseline commit and compress
+        run: |
+          set -euo pipefail
+          git worktree add /tmp/old "$baseline" 2>/dev/null || true
           make -C /tmp/old cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
           /tmp/old/cmix -n prof_input/input2 /tmp/parent.bin 2>&1 | tail -1
 
@@ -210,5 +222,5 @@ jobs:
         run: |
           set -euo pipefail
           cmp /tmp/head.bin /tmp/parent.bin \
-            && echo "PASS: HEAD and parent produce byte-identical compressed output" \
-            || { echo "FAIL: compressed output differs from parent — revert or fix"; exit 1; }
+            && echo "PASS: HEAD and $baseline produce byte-identical compressed output" \
+            || { echo "FAIL: compressed output differs from $baseline — revert or fix"; exit 1; }

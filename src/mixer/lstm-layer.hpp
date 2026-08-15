@@ -77,11 +77,10 @@ inline void Adam(std::valarray<float>* g, std::valarray<float>* m,
 static inline void lstm_forward_normalize(NeuronLayer& neurons, int epoch,
     unsigned int num_cells) {
 #pragma clang fp contract(off)
-  float sum = 0;
-  for (unsigned int i = 0; i < num_cells; ++i) {
-    float n = neurons.norm_[epoch][i];
-    sum += n * n;
-  }
+  // The reduction must stay in its exact valarray form: the vectorizer's
+  // partial-sum tree for a fused loop can differ from the original
+  // (temp array then sequential sum), which changes the rounded result.
+  float sum = (neurons.norm_[epoch] * neurons.norm_[epoch]).sum();
   neurons.ivar_[epoch] = 1.0f / sqrt((sum / num_cells) + 1e-5f);
   for (unsigned int i = 0; i < num_cells; ++i) {
     neurons.norm_[epoch][i] *= neurons.ivar_[epoch];
@@ -107,10 +106,8 @@ static inline void lstm_backward_errors(NeuronLayer& neurons, int epoch,
   for (unsigned int i = 0; i < num_cells; ++i) {
     neurons.error_[i] *= neurons.gamma_[i] * neurons.ivar_[epoch];
   }
-  float sum = 0;
-  for (unsigned int i = 0; i < num_cells; ++i) {
-    sum += neurons.error_[i] * neurons.norm_[epoch][i];
-  }
+  // Reduction kept in its exact valarray form (see lstm_forward_normalize).
+  float sum = (neurons.error_ * neurons.norm_[epoch]).sum();
   const float mean = sum / num_cells;
   for (unsigned int i = 0; i < num_cells; ++i) {
     neurons.error_[i] -= mean * neurons.norm_[epoch][i];
