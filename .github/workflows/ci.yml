@@ -319,11 +319,13 @@ jobs:
           git worktree add /tmp/old "$baseline" 2>/dev/null || true
           make -C /tmp/old cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
 
-      # Interleaved timing (HEAD, baseline, HEAD, baseline) so
-      # thermal/co-tenant drift affects both equally; min-of-2 per binary
-      # cancels cold-start. The delta is informational: shared-runner noise
-      # is a few percent, so treat only large or repeated deltas as
-      # significant.
+      # Interleaved timing (HEAD, baseline, HEAD, baseline, HEAD, baseline)
+      # so thermal/co-tenant drift affects both equally; min-of-3 per
+      # binary cancels cold-start and occasional outliers better than
+      # min-of-2 did, and the per-rep spread (max-min, as % of the min)
+      # reports how noisy this particular run was. The delta is
+      # informational: shared-runner noise is a few percent, so treat only
+      # large or repeated deltas as significant.
       - name: Interleaved wall-clock A/B on prof_input/input
         run: |
           set -euo pipefail
@@ -338,14 +340,20 @@ jobs:
           o1=$(run_one /tmp/old/cmix /tmp/o1.bin)
           h2=$(run_one ./cmix /tmp/h2.bin)
           o2=$(run_one /tmp/old/cmix /tmp/o2.bin)
-          h=$(( h1 < h2 ? h1 : h2 ))
-          o=$(( o1 < o2 ? o1 : o2 ))
+          h3=$(run_one ./cmix /tmp/h3.bin)
+          o3=$(run_one /tmp/old/cmix /tmp/o3.bin)
+          h=$h1; [ "$h2" -lt "$h" ] && h=$h2; [ "$h3" -lt "$h" ] && h=$h3
+          o=$o1; [ "$o2" -lt "$o" ] && o=$o2; [ "$o3" -lt "$o" ] && o=$o3
+          hmax=$h1; [ "$h2" -gt "$hmax" ] && hmax=$h2; [ "$h3" -gt "$hmax" ] && hmax=$h3
+          omax=$o1; [ "$o2" -gt "$omax" ] && omax=$o2; [ "$o3" -gt "$omax" ] && omax=$o3
+          HSP=$(awk "BEGIN{printf \"%d ms (%.1f%%)\", $((hmax-h)), ($hmax-$h)/$h*100}")
+          OSP=$(awk "BEGIN{printf \"%d ms (%.1f%%)\", $((omax-o)), ($omax-$o)/$o*100}")
           DELTA=$(awk "BEGIN{printf \"%+.1f%%\", ($h-$o)/$o*100}")
-          echo "HEAD compression time:    ${h} ms (reps $h1, $h2)"
-          echo "Baseline compression:     ${o} ms (reps $o1, $o2)  [$baseline]"
+          echo "HEAD compression time:    ${h} ms (reps $h1, $h2, $h3; spread $HSP)"
+          echo "Baseline compression:     ${o} ms (reps $o1, $o2, $o3; spread $OSP)  [$baseline]"
           echo "delta (HEAD vs baseline): $DELTA  (negative = faster)"
-          printf 'HEAD=%s ms (reps %s,%s)\nBASELINE=%s ms (reps %s,%s) [%s]\nDELTA=%s\n' \
-            "$h" "$h1" "$h2" "$o" "$o1" "$o2" "$baseline" "$DELTA" > benchmark-report.txt
+          printf 'HEAD=%s ms (reps %s,%s,%s; spread %s)\nBASELINE=%s ms (reps %s,%s,%s; spread %s) [%s]\nDELTA=%s\n' \
+            "$h" "$h1" "$h2" "$h3" "$HSP" "$o" "$o1" "$o2" "$o3" "$OSP" "$baseline" "$DELTA" > benchmark-report.txt
           echo "report written to benchmark-report.txt"
 
       - name: Upload benchmark report
