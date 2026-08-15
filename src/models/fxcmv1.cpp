@@ -1308,7 +1308,11 @@ union  E1 {  // hash element, 64 bytes
       // If not found, insert or replace lowest priority (not last).
       };
      U8 pad[B] ;
-      __attribute__ ((noinline)) U8* get(U16 ch,int keep) {
+      // Experiment: force inlining of get(). Removing plain `noinline` was a
+      // no-op (clang's inliner declined the probe loop + memset); this tests
+      // whether forced inlining helps or hurts. Semantics-preserving, so
+      // compressed output is unchanged — measured via the manual gprof job.
+      __attribute__((always_inline)) U8* get(U16 ch,int keep) {
 
   if (chk[last&15]==ch) return &bh[last&15][0];
   int b=0xffff, bi=0;
