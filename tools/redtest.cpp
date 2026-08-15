@@ -102,6 +102,63 @@ static void test_case(const char* tag, const float* w, const float* in,
          memcmp(&a, &b, 4) == 0 ? "BIT-EQUAL" : "DIFFER");
 }
 
+// ---- the LayerNorm sum: (norm_*norm_).sum(), the reversed-accumulate
+//      tree with backward tail (norm_ size = num_cells_ = 200) ----
+static float old_sqsum(const float* x) {
+  float s = 0;
+  for (int j = 0; j < N; ++j) s += x[j] * x[j];
+  return s;
+}
+
+static float new_sqsum(const float* x) {
+  const int M = (N / 32) * 32;
+  __m256 y0 = _mm256_setzero_ps(), y1 = _mm256_setzero_ps();
+  __m256 y2 = _mm256_setzero_ps(), y3 = _mm256_setzero_ps();
+  float sum = 0.0f;
+  if (N > 0) {
+    y0 = _mm256_set_ps(0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, x[N - 1] * x[N - 1]);
+    for (int blk = N - 33; blk >= N - M - 1; blk -= 32) {
+      __m256 g0 = _mm256_mul_ps(_mm256_loadu_ps(x + blk),
+                                _mm256_loadu_ps(x + blk));
+      __m256 g1 = _mm256_mul_ps(_mm256_loadu_ps(x + blk + 8),
+                                _mm256_loadu_ps(x + blk + 8));
+      __m256 g2 = _mm256_mul_ps(_mm256_loadu_ps(x + blk + 16),
+                                _mm256_loadu_ps(x + blk + 16));
+      __m256 g3 = _mm256_mul_ps(_mm256_loadu_ps(x + blk + 24),
+                                _mm256_loadu_ps(x + blk + 24));
+      g0 = _mm256_castpd_ps(_mm256_permute4x64_pd(
+          _mm256_castps_pd(_mm256_shuffle_ps(g0, g0, 0x1b)), 0x4e));
+      g1 = _mm256_castpd_ps(_mm256_permute4x64_pd(
+          _mm256_castps_pd(_mm256_shuffle_ps(g1, g1, 0x1b)), 0x4e));
+      g2 = _mm256_castpd_ps(_mm256_permute4x64_pd(
+          _mm256_castps_pd(_mm256_shuffle_ps(g2, g2, 0x1b)), 0x4e));
+      g3 = _mm256_castpd_ps(_mm256_permute4x64_pd(
+          _mm256_castps_pd(_mm256_shuffle_ps(g3, g3, 0x1b)), 0x4e));
+      y0 = _mm256_add_ps(g3, y0);
+      y1 = _mm256_add_ps(g2, y1);
+      y2 = _mm256_add_ps(g1, y2);
+      y3 = _mm256_add_ps(g0, y3);
+    }
+    {
+#pragma clang fp reassociate(off) contract(off)
+      __m256 a0 = _mm256_add_ps(y1, y0);
+      a0 = _mm256_add_ps(y2, a0);
+      a0 = _mm256_add_ps(y3, a0);
+      __m128 xv = _mm_add_ps(_mm256_castps256_ps128(a0),
+                             _mm256_extractf128_ps(a0, 1));
+      xv = _mm_add_ps(xv, _mm_shuffle_pd(xv, xv, 0x1));
+      xv = _mm_add_ss(xv, _mm_movehdup_ps(xv));
+      sum = _mm_cvtss_f32(xv);
+    }
+    {
+#pragma clang fp reassociate(off) contract(off)
+      for (int i = (int)((N - 1) & 31) - 1; i >= 0; --i)
+        sum = __builtin_fmaf(x[i], x[i], sum);
+    }
+  }
+  return sum;
+}
+
 static void proj_case(const char* tag, const float* w, const float* in) {
   float a = old_proj(w, in);
   float b = new_proj(w, in);
@@ -144,5 +201,16 @@ int main(int argc, char** argv) {
   for (int j = 0; j < N; ++j) w[j] = d(rng);
   for (int j = 0; j < N; ++j) in[j] = d(rng);
   proj_case("proj N=201", w, in);
+  // LayerNorm reversed sum: real length num_cells_=200 (also probe 201/33).
+  for (int c = 0; c < 3; ++c) {
+    N = c == 0 ? 200 : c == 1 ? 201 : 33;
+    for (int j = 0; j < N; ++j) in[j] = d(rng);
+    char tag[32];
+    snprintf(tag, sizeof tag, "sqsum N=%d", N);
+    float a = old_sqsum(in);
+    float b = new_sqsum(in);
+    printf("%-14s old=%a new=%a %s\n", tag, (double)a, (double)b,
+           memcmp(&a, &b, 4) == 0 ? "BIT-EQUAL" : "DIFFER");
+  }
   return 0;
 }

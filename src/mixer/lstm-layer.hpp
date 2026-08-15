@@ -36,6 +36,64 @@ namespace {
 //   return __tmp;
 // }
 
+// Reversed-accumulate dot-product sum, reproducing clang-17's exact codegen
+// for the valarray `.sum()` reductions in the LSTM (norm_*norm_ and
+// error_*norm_): the LAST element's product seeds accumulator lane 0, the
+// remaining elements accumulate 8-wide from the top down in REVERSED lane
+// order (vshufps 0x1b + vpermpd 0x4e), the four accumulators combine
+// sequentially ((y0+y1)+y2)+y3, and the scalar tail runs BACKWARD. Every
+// chain is dependent (no pairing freedom), so the FP tree is fixed by
+// construction regardless of compiler version or flags.
+inline float SumRevProduct(const float* a, const float* b, unsigned int n) {
+  const int M = (int)((n / 32) * 32);
+  __m256 y0 = _mm256_setzero_ps(), y1 = _mm256_setzero_ps();
+  __m256 y2 = _mm256_setzero_ps(), y3 = _mm256_setzero_ps();
+  float sum = 0.0f;
+  if (n > 0) {
+    y0 = _mm256_set_ps(0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f,
+                       a[n - 1] * b[n - 1]);
+    for (int blk = (int)n - 33; blk >= (int)n - M - 1; blk -= 32) {
+      __m256 g0 = _mm256_mul_ps(_mm256_loadu_ps(a + blk),
+                                _mm256_loadu_ps(b + blk));
+      __m256 g1 = _mm256_mul_ps(_mm256_loadu_ps(a + blk + 8),
+                                _mm256_loadu_ps(b + blk + 8));
+      __m256 g2 = _mm256_mul_ps(_mm256_loadu_ps(a + blk + 16),
+                                _mm256_loadu_ps(b + blk + 16));
+      __m256 g3 = _mm256_mul_ps(_mm256_loadu_ps(a + blk + 24),
+                                _mm256_loadu_ps(b + blk + 24));
+      g0 = _mm256_castpd_ps(_mm256_permute4x64_pd(
+          _mm256_castps_pd(_mm256_shuffle_ps(g0, g0, 0x1b)), 0x4e));
+      g1 = _mm256_castpd_ps(_mm256_permute4x64_pd(
+          _mm256_castps_pd(_mm256_shuffle_ps(g1, g1, 0x1b)), 0x4e));
+      g2 = _mm256_castpd_ps(_mm256_permute4x64_pd(
+          _mm256_castps_pd(_mm256_shuffle_ps(g2, g2, 0x1b)), 0x4e));
+      g3 = _mm256_castpd_ps(_mm256_permute4x64_pd(
+          _mm256_castps_pd(_mm256_shuffle_ps(g3, g3, 0x1b)), 0x4e));
+      y0 = _mm256_add_ps(g3, y0);
+      y1 = _mm256_add_ps(g2, y1);
+      y2 = _mm256_add_ps(g1, y2);
+      y3 = _mm256_add_ps(g0, y3);
+    }
+    {
+#pragma clang fp reassociate(off) contract(off)
+      __m256 a0 = _mm256_add_ps(y1, y0);
+      a0 = _mm256_add_ps(y2, a0);
+      a0 = _mm256_add_ps(y3, a0);
+      __m128 x = _mm_add_ps(_mm256_castps256_ps128(a0),
+                            _mm256_extractf128_ps(a0, 1));
+      x = _mm_add_ps(x, _mm_shuffle_pd(x, x, 0x1));
+      x = _mm_add_ss(x, _mm_movehdup_ps(x));
+      sum = _mm_cvtss_f32(x);
+    }
+    {
+#pragma clang fp reassociate(off) contract(off)
+      for (int i = (int)((n - 1) & 31) - 1; i >= 0; --i)
+        sum = __builtin_fmaf(a[i], b[i], sum);
+    }
+  }
+  return sum;
+}
+
 inline void Adam(std::valarray<float>* g, std::valarray<float>* m,
     std::valarray<float>* v, std::valarray<float>* w, float learning_rate,
     float t) {
@@ -184,8 +242,20 @@ inline void LstmLayer::ForwardPass(NeuronLayer& neurons,
     }
     neurons.norm_[epoch_][i] = f;
   }
-  neurons.ivar_[epoch_] = 1.0f / sqrt(((neurons.norm_[epoch_] *
-      neurons.norm_[epoch_]).sum() / num_cells_) + 1e-5f);
+  // LayerNorm ivar reconstructed BY CONSTRUCTION. The sum uses the same
+  // reversed-accumulate tree as the emitted (norm_*norm_).sum(); then
+  // 1/sqrt(x) becomes the exact emitted vrsqrtss + one-Newton sequence:
+  // r = rsqrt(x); ivar = (r*-0.5) * fma(r, x*r, -3.0) — the Newton
+  // constants follow uniquely from the target 1/sqrt(x) (C2=-1/2, C1=-3).
+  {
+    const float* nx = &neurons.norm_[epoch_][0];
+    const float xv = SumRevProduct(nx, nx, num_cells_) / (float)num_cells_ +
+        1e-5f;
+    const float r = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(xv)));
+#pragma clang fp reassociate(off) contract(off)
+    neurons.ivar_[epoch_] =
+        (r * -0.5f) * __builtin_fmaf(r, xv * r, -3.0f);
+  }
   neurons.norm_[epoch_] *= neurons.ivar_[epoch_];
   neurons.state_[epoch_] = neurons.norm_[epoch_] * neurons.gamma_ +
       neurons.beta_;
