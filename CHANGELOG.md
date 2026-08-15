@@ -49,6 +49,17 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
   length (657, 457 [the real gate length], 201, 128, 40, 33, 32, 31, 17,
   all-ones).
 
+- **Harness is now an instruction-level oracle**: `tools/redtest.cpp`
+  builds with `-fno-inline` so every `old_*`/`new_*` function compiles
+  standalone — no inliner-driven FP lowering can change between runs or
+  between harness and a future edit. The disasm job objdumps the whole
+  harness, so each reduction pair (matvec, projection, sqsum, softmax,
+  gate chains, Adam) is verifiable at the instruction level, and dumps
+  the full `.rodata` of both HEAD and the identity baseline (constants
+  are materialized as immediates in code, but the 0.5f tables are
+  confirmed identical across builds). Baseline fetch fixed to use the
+  full 40-char SHA (GitHub rejects abbreviated SHAs as refs).
+
 ### Added
 - GitHub Actions CI (`.github/workflows/ci.yml`):
   - **Output identity (HEAD vs parent)** job: every push must produce

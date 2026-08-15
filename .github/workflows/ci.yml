@@ -285,7 +285,6 @@ jobs:
           # LSTM Adam/LayerNorm Newton constants are folded literals whose
           # exact values must be frozen by the reconstruction. The baseline
           # commit carries the pre-reconstruction codegen.
-          echo "===== BASELINE a45952b rodata 391xx/392xx ====="
           # GitHub only accepts full SHAs as fetch refs (abbreviated SHAs are
           # not refs), so use the full 40-char SHA of the identity baseline.
           git fetch origin a45952be96eb76cf2930b9da9b3c2536b2c3075a --depth=1
