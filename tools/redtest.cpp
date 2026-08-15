@@ -38,12 +38,16 @@ static float new_matvec(const float* w, const float* in, int is) {
     y3 = _mm256_fmadd_ps(_mm256_loadu_ps(w + o + b + 24), _mm256_loadu_ps(in + b + 24), y3);
   }
   // Same pinned reduce as the real binary: clang re-pairs the partial-sum
-  // tree under fast-math (broke byte-identity), so pin it by construction.
+  // tree under fast-math (broke byte-identity). The pragma alone was NOT
+  // enough in the real binary's context (pairing is encoded in register
+  // allocation, invisible to instruction-level comparison), so pin the two
+  // partials through a volatile round-trip — no pass can regroup them.
   {
 #pragma clang fp reassociate(off) contract(off)
     __m256 t0 = _mm256_add_ps(y1, y0);
     __m256 t1 = _mm256_add_ps(y3, y2);
-    __m256 t2 = _mm256_add_ps(t1, t0);
+    volatile __m256 v0 = t0, v1 = t1;
+    __m256 t2 = _mm256_add_ps(v1, v0);
     __m128 x = _mm_add_ps(_mm256_castps256_ps128(t2), _mm256_extractf128_ps(t2, 1));
     x = _mm_add_ps(x, _mm_shuffle_pd(x, x, 0x1));
     x = _mm_add_ss(x, _mm_movehdup_ps(x));
@@ -68,7 +72,10 @@ int main(int argc, char** argv) {
   std::mt19937 rng(12345);
   std::uniform_real_distribution<float> d(-1.f, 1.f);
   static float w[5120], in[5120];
-  const int cases_n[] = {657, 201, 128, 40, 33, 32, 31, 17};
+  // 457 is the real LSTM gate-matvec length (1 + num_cells + input_size =
+  // 1 + 200 + 256); 657/201 probe tail lengths 17/9 (tail-9 is the real
+  // binary's tail and the case the standalone harness originally missed).
+  const int cases_n[] = {657, 457, 201, 128, 40, 33, 32, 31, 17};
   for (int c = 0; c < 8; ++c) {
     N = cases_n[c];
     o = 256;

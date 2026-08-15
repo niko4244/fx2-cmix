@@ -146,14 +146,21 @@ inline void LstmLayer::ForwardPass(NeuronLayer& neurons,
       // The horizontal reduce must NOT be re-paired. The individual
       // __m256 adds are commutative (a+b == b+a bit-for-bit), so operand
       // order within each add is free — but the PARTIAL-SUM TREE is not:
-      // under -ffp-model=fast clang reassociated this to (y3+y0)+(y2+y1),
-      // a different rounding tree than the emitted loop's (y1+y0)+(y3+y2),
-      // which broke byte-identity. Pin the exact tree by construction.
+      // under -ffp-model=fast, clang's backend reassociated the tree here,
+      // pairing (y2+y1),(y3+y0) instead of the emitted loop's
+      // (y1+y0),(y3+y2) — same operations, different rounding, different
+      // bytes. #pragma clang fp reassociate(off) was NOT sufficient in this
+      // context (it held in the standalone harness but the larger function
+      // re-paired anyway — that pairing is encoded in register allocation,
+      // invisible to instruction-level comparisons). The volatile round-trip
+      // makes the two partial sums distinct, memory-pinned values that no
+      // pass can regroup: the tree (y1+y0)+(y3+y2) is fixed by construction.
       {
 #pragma clang fp reassociate(off) contract(off)
         __m256 t0 = _mm256_add_ps(y1, y0);
         __m256 t1 = _mm256_add_ps(y3, y2);
-        __m256 t2 = _mm256_add_ps(t1, t0);
+        volatile __m256 v0 = t0, v1 = t1;
+        __m256 t2 = _mm256_add_ps(v1, v0);
         __m128 x = _mm_add_ps(_mm256_castps256_ps128(t2),
                               _mm256_extractf128_ps(t2, 1));
         x = _mm_add_ps(x, _mm_shuffle_pd(x, x, 0x1));
