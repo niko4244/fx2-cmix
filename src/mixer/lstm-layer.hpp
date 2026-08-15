@@ -35,31 +35,26 @@ namespace {
 //   return __tmp;
 // }
 
-// Scalar-loop Adam: identical per-element arithmetic to the valarray version
-// (same operations, same order), but allocates no temporaries. Called once per
-// cell per backprop epoch, so the valarray temp churn here was measurable.
 inline void Adam(std::valarray<float>* g, std::valarray<float>* m,
     std::valarray<float>* v, std::valarray<float>* w, float learning_rate,
     float t) {
-  const float beta1 = 0.025f, beta2 = 0.9999f, eps = 1e-6f;
-  float alpha, denom1, denom2;
+  const float beta1 = 0.025, beta2 = 0.9999, eps = 1e-6f; 
+  float alpha;
   if (t < UPDATE_LIMIT) {
-    alpha = learning_rate * 0.1f / sqrt(5e-5f * t + 1.0f);
-    denom1 = 1.0f - pow(beta1, t);
-    denom2 = 1.0f - pow(beta2, t);
+    alpha = learning_rate * 0.1f / sqrt(5e-5f * t + 1.0f); 
   } else {
-    alpha = learning_rate * 0.1f / sqrt(5e-5f * UPDATE_LIMIT + 1.0f);
-    denom1 = 1.0f - pow(beta1, (float)UPDATE_LIMIT);
-    denom2 = 1.0f - pow(beta2, (float)UPDATE_LIMIT);
+    alpha = learning_rate * 0.1f / sqrt(5e-5f * UPDATE_LIMIT + 1.0f); 
   }
-  const float b1 = 1.0f - beta1, b2 = 1.0f - beta2;
-  for (size_t i = 0; i < g->size(); ++i) {
-    (*m)[i] *= beta1;
-    (*m)[i] += b1 * (*g)[i];
-    (*v)[i] *= beta2;
-    (*v)[i] += b2 * (*g)[i] * (*g)[i];
-    (*w)[i] -= alpha * (((*m)[i] / denom1) /
-        (sqrt((*v)[i] / denom2 + eps)));
+  (*m) *= beta1;
+  (*m) += (1.0f - beta1) * (*g);
+  (*v) *= beta2;
+  (*v) += (1.0f - beta2) * (*g) * (*g);
+  if (t < UPDATE_LIMIT) {
+    (*w) -= alpha * (((*m) / (float)(1.0f - pow(beta1, t))) /
+        (sqrt((*v) / (float)(1.0f - pow(beta2, t)) + eps)));
+  } else {
+    (*w) -= alpha * (((*m) / (float)(1.0f - pow(beta1, UPDATE_LIMIT))) /
+        (sqrt((*v) / (float)(1.0f - pow(beta2, UPDATE_LIMIT)) + eps)));
   }
 }
 
@@ -104,23 +99,12 @@ inline void LstmLayer::ForwardPass(const std::valarray<float>& input, int input_
     output_gate_.state_[epoch_][i] = Sigmoid::Logistic(
         output_gate_.state_[epoch_][i]);
   }
-  // Scalar loops replace valarray temporaries; arithmetic is element-identical.
-  for (unsigned int i = 0; i < num_cells_; ++i) {
-    input_gate_state_[epoch_][i] = 1.0f - forget_gate_.state_[epoch_][i];
-  }
-  for (unsigned int i = 0; i < num_cells_; ++i) {
-    state_[i] *= forget_gate_.state_[epoch_][i];
-  }
-  for (unsigned int i = 0; i < num_cells_; ++i) {
-    state_[i] += input_node_.state_[epoch_][i] * input_gate_state_[epoch_][i];
-  }
-  for (unsigned int i = 0; i < num_cells_; ++i) {
-    tanh_state_[epoch_][i] = FAST_TANH(state_[i]);
-  }
-  for (unsigned int i = 0; i < num_cells_; ++i) {
-    (*hidden)[hidden_start + i] =
-        output_gate_.state_[epoch_][i] * tanh_state_[epoch_][i];
-  }
+  input_gate_state_[epoch_] = 1.0f - forget_gate_.state_[epoch_];
+  state_ *= forget_gate_.state_[epoch_];
+  state_ += input_node_.state_[epoch_] * input_gate_state_[epoch_];
+  tanh_state_[epoch_] = FAST_TANH_VEC(state_);
+  std::slice slice = std::slice(hidden_start, num_cells_, 1);
+  (*hidden)[slice] = output_gate_.state_[epoch_] * tanh_state_[epoch_];
   ++epoch_;
   if (epoch_ == horizon_) epoch_ = 0;
 }
@@ -134,22 +118,11 @@ inline void LstmLayer::ForwardPass(NeuronLayer& neurons,
     }
     neurons.norm_[epoch_][i] = f;
   }
-  // Scalar loops replace valarray temporaries; reduction and element ops are
-  // in the same order as the valarray versions ((norm*norm).sum() accumulates
-  // sequentially, matching the loop below).
-  float sum = 0;
-  for (unsigned int i = 0; i < num_cells_; ++i) {
-    float n = neurons.norm_[epoch_][i];
-    sum += n * n;
-  }
-  neurons.ivar_[epoch_] = 1.0f / sqrt((sum / num_cells_) + 1e-5f);
-  for (unsigned int i = 0; i < num_cells_; ++i) {
-    neurons.norm_[epoch_][i] *= neurons.ivar_[epoch_];
-  }
-  for (unsigned int i = 0; i < num_cells_; ++i) {
-    neurons.state_[epoch_][i] = neurons.norm_[epoch_][i] * neurons.gamma_[i] +
-        neurons.beta_[i];
-  }
+  neurons.ivar_[epoch_] = 1.0f / sqrt(((neurons.norm_[epoch_] *
+      neurons.norm_[epoch_]).sum() / num_cells_) + 1e-5f);
+  neurons.norm_[epoch_] *= neurons.ivar_[epoch_];
+  neurons.state_[epoch_] = neurons.norm_[epoch_] * neurons.gamma_ +
+      neurons.beta_;
 }
 
 inline void LstmLayer::ClipGradients(std::valarray<float>* arr) {
@@ -168,37 +141,19 @@ inline void LstmLayer::BackwardPass(const std::valarray<float>&input, int epoch,
     stored_error_ += *hidden_error;
   }
 
-  // Scalar loops replace valarray temporaries; per-element operations and
-  // their order are identical to the valarray expressions.
-  for (unsigned int i = 0; i < num_cells_; ++i) {
-    output_gate_.error_[i] = tanh_state_[epoch][i] * stored_error_[i] *
-        output_gate_.state_[epoch][i] *
-        (1.0f - output_gate_.state_[epoch][i]);
-  }
-  for (unsigned int i = 0; i < num_cells_; ++i) {
-    state_error_[i] += stored_error_[i] * output_gate_.state_[epoch][i] *
-        (1.0f - (tanh_state_[epoch][i] * tanh_state_[epoch][i]));
-  }
-  for (unsigned int i = 0; i < num_cells_; ++i) {
-    input_node_.error_[i] = state_error_[i] * input_gate_state_[epoch][i] *
-        (1.0f - (input_node_.state_[epoch][i] * input_node_.state_[epoch][i]));
-  }
-  for (unsigned int i = 0; i < num_cells_; ++i) {
-    forget_gate_.error_[i] = (last_state_[epoch][i] - input_node_.state_[epoch][i]) *
-        state_error_[i] * forget_gate_.state_[epoch][i] *
-        input_gate_state_[epoch][i];
-  }
+  output_gate_.error_ = tanh_state_[epoch] * stored_error_ *
+      output_gate_.state_[epoch] * (1.0f - output_gate_.state_[epoch]);
+  state_error_ += stored_error_ * output_gate_.state_[epoch] * (1.0f -
+      (tanh_state_[epoch] * tanh_state_[epoch]));
+  input_node_.error_ = state_error_ * input_gate_state_[epoch] * (1.0f -
+      (input_node_.state_[epoch] * input_node_.state_[epoch]));
+  forget_gate_.error_ = (last_state_[epoch] - input_node_.state_[epoch]) *
+      state_error_ * forget_gate_.state_[epoch] * input_gate_state_[epoch];
 
-  for (unsigned int i = 0; i < num_cells_; ++i) {
-    (*hidden_error)[i] = 0;
-  }
+  *hidden_error = 0;
   if (epoch > 0) {
-    for (unsigned int i = 0; i < num_cells_; ++i) {
-      state_error_[i] *= forget_gate_.state_[epoch][i];
-    }
-    for (unsigned int i = 0; i < num_cells_; ++i) {
-      stored_error_[i] = 0;
-    }
+    state_error_ *= forget_gate_.state_[epoch];
+    stored_error_ = 0;
   } else {
     if (update_steps_ < UPDATE_LIMIT) {
       ++update_steps_;
@@ -218,39 +173,21 @@ inline void LstmLayer::BackwardPass(NeuronLayer& neurons,
     const std::valarray<float>&input, int epoch, int layer, int input_symbol,
     std::valarray<float>* hidden_error) {
   if (epoch == (int)horizon_ - 1) {
+    neurons.gamma_u_ = 0;
+    neurons.beta_u_ = 0;
     for (unsigned int i = 0; i < num_cells_; ++i) {
-      neurons.gamma_u_[i] = 0;
-      neurons.beta_u_[i] = 0;
-    }
-    for (unsigned int i = 0; i < num_cells_; ++i) {
-      for (unsigned int j = 0; j < neurons.update_[i].size(); ++j) {
-        neurons.update_[i][j] = 0;
-      }
+      neurons.update_[i] = 0;
       int offset = output_size_ + input_size_;
       for (unsigned int j = 0; j < neurons.transpose_.size(); ++j) {
         neurons.transpose_[j][i] = neurons.weights_[i][j + offset];
       }
     }
   }
-  // Scalar loops replace valarray temporaries; element ops and reduction
-  // order are identical to the valarray expressions.
-  for (unsigned int i = 0; i < num_cells_; ++i) {
-    neurons.beta_u_[i] += neurons.error_[i];
-  }
-  for (unsigned int i = 0; i < num_cells_; ++i) {
-    neurons.gamma_u_[i] += neurons.error_[i] * neurons.norm_[epoch][i];
-  }
-  for (unsigned int i = 0; i < num_cells_; ++i) {
-    neurons.error_[i] *= neurons.gamma_[i] * neurons.ivar_[epoch];
-  }
-  float sum = 0;
-  for (unsigned int i = 0; i < num_cells_; ++i) {
-    sum += neurons.error_[i] * neurons.norm_[epoch][i];
-  }
-  const float mean = sum / num_cells_;
-  for (unsigned int i = 0; i < num_cells_; ++i) {
-    neurons.error_[i] -= mean * neurons.norm_[epoch][i];
-  }
+  neurons.beta_u_ += neurons.error_;
+  neurons.gamma_u_ += neurons.error_ * neurons.norm_[epoch];
+  neurons.error_ *= neurons.gamma_ * neurons.ivar_[epoch];
+  neurons.error_ -= ((neurons.error_ * neurons.norm_[epoch]).sum() /
+      num_cells_) * neurons.norm_[epoch];
   if (layer > 0) {
     for (unsigned int i = 0; i < num_cells_; ++i) {
       float f = 0;
@@ -269,13 +206,10 @@ inline void LstmLayer::BackwardPass(NeuronLayer& neurons,
       stored_error_[i] += f;
     }
   }
-  const unsigned int input_size = input.size();
+  std::slice slice = std::slice(output_size_, input.size(), 1);
   for (unsigned int i = 0; i < num_cells_; ++i) {
-    const float e = neurons.error_[i];
-    for (unsigned int j = 0; j < input_size; ++j) {
-      neurons.update_[i][output_size_ + j] += e * input[j];
-    }
-    neurons.update_[i][input_symbol] += e;
+    neurons.update_[i][slice] += neurons.error_[i] * input;
+    neurons.update_[i][input_symbol] += neurons.error_[i];
   }
   if (epoch == 0) {
     for (unsigned int i = 0; i < num_cells_; ++i) {

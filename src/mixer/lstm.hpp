@@ -115,12 +115,8 @@ inline std::valarray<float>& Lstm::Perceive(unsigned int input) {
 //    if (i == input) error = output_[last_epoch][i] - 1;
 //    else error = output_[last_epoch][i];
     float error = (i == input) ? (output_[last_epoch][i] - 1) : output_[last_epoch][i];
-    const float lr_err = learning_rate_ * error;
     output_layer_[epoch_][i] = output_layer_[last_epoch][i];
-    // Scalar loop replaces the valarray temp (learning_rate_*error)*hidden_.
-    for (unsigned int j = 0; j < hidden_.size(); ++j) {
-      output_layer_[epoch_][i][j] -= lr_err * hidden_[j];
-    }
+    output_layer_[epoch_][i] -= learning_rate_ * error * hidden_;
   }
   return Predict(input);
 }
@@ -145,14 +141,7 @@ inline std::valarray<float>& Lstm::Predict(unsigned int input) {
     }
     output_[epoch_][i] = exp(sum);
   }
-  // Scalar loop replaces the valarray temp (output_[epoch_].sum()).
-  float sum_out = 0;
-  for (unsigned int i = 0; i < output_size_; ++i) {
-    sum_out += output_[epoch_][i];
-  }
-  for (unsigned int i = 0; i < output_size_; ++i) {
-    output_[epoch_][i] /= sum_out;
-  }
+  output_[epoch_] /= output_[epoch_].sum();
   int epoch = epoch_;
   ++epoch_;
   if (epoch_ == horizon_) epoch_ = 0;
