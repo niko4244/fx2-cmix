@@ -6,8 +6,12 @@
 
 #ifdef _WIN32
 
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 #include <io.h>
 #include <sys/types.h>
@@ -28,11 +32,17 @@ inline void* mmap(void* /*addr*/, size_t length, int prot, int /*flags*/,
         fd, errno);
     return MAP_FAILED;
   }
+  // Size the mapping explicitly from `length` instead of relying on the
+  // current file size: ppmd.cpp creates the backing file with open()/lseek()/
+  // write(), and the file size can lag the fd position (a 0-size mapping
+  // makes MapViewOfFile fail with ERROR_ACCESS_DENIED).
   DWORD protect = (prot & PROT_WRITE) ? PAGE_READWRITE : PAGE_READONLY;
-  HANDLE mapping = CreateFileMappingA(file, NULL, protect, 0, 0, NULL);
+  DWORD max_hi = (DWORD)((unsigned long long)length >> 32);
+  DWORD max_lo = (DWORD)((unsigned long long)length & 0xFFFFFFFFu);
+  HANDLE mapping = CreateFileMappingA(file, NULL, protect, max_hi, max_lo, NULL);
   if (!mapping) {
-    fprintf(stderr, "mman_shim: mmap: CreateFileMappingA failed, "
-        "GetLastError=%lu\n", GetLastError());
+    fprintf(stderr, "mman_shim: mmap: CreateFileMappingA(%llu bytes) failed, "
+        "GetLastError=%lu\n", (unsigned long long)length, GetLastError());
     return MAP_FAILED;
   }
   DWORD access = (prot & PROT_WRITE) ? FILE_MAP_WRITE : FILE_MAP_READ;
@@ -41,8 +51,8 @@ inline void* mmap(void* /*addr*/, size_t length, int prot, int /*flags*/,
   void* view = MapViewOfFile(mapping, access, offset_hi, offset_lo, length);
   CloseHandle(mapping);  // the view keeps the underlying mapping alive
   if (!view) {
-    fprintf(stderr, "mman_shim: mmap: MapViewOfFile failed, "
-        "GetLastError=%lu\n", GetLastError());
+    fprintf(stderr, "mman_shim: mmap: MapViewOfFile(%llu bytes) failed, "
+        "GetLastError=%lu\n", (unsigned long long)length, GetLastError());
     return MAP_FAILED;
   }
   return view;

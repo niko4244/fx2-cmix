@@ -62,11 +62,22 @@ jobs:
             /usr/bin/time -v ./cmix -n prof_input/input /tmp/probe_$i.bin 2>&1 \
               | grep -E "Exit status|Maximum resident" | tr -d '\t' | tr '\n' ' '; echo "(run $i)"
           done
-          echo "=== 6 gdb runs: -n (backtrace) ==="
+          echo "=== 6 gdb runs: -n (backtrace + state) ==="
           for i in $(seq 1 6); do
-            gdb -batch -ex "set pagination off" -ex run -ex "bt 40" \
+            gdb -batch -ex "set pagination off" -ex run \
+              -ex "bt 10" \
+              -ex "frame 0" \
+              -ex "p counter_" \
+              -ex "p/x HeapStart" \
+              -ex "p/x UnitsStart" \
+              -ex "p/x MaxContext" \
+              -ex "p/x LoUnit" \
+              -ex "p/x HiUnit" \
+              -ex "p/x SubAllocatorSize" \
+              -ex "frame 4" \
+              -ex "p pos" \
               --args ./cmix -n prof_input/input /tmp/gdb_$i.bin 2>&1 \
-              | grep -A 14 "Program received" | head -18
+              | grep -E "Program received|^#[0-9]+ |\$[0-9]+ =| = " | head -25
             echo "(gdb run $i done)"
           done
           exit 0

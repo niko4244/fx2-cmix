@@ -28,6 +28,10 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
   compressed output reproducible across runners.
 - `makefile`: new `DEBUG=1` build flag — adds `-g` and disables stripping
   (`-s`), for symbolicated debugging and CI crash backtraces.
+- `src/models/mman_shim.h`: size the Win32 file mapping explicitly from
+  the requested `length` (fixes `MapViewOfFile` ERROR_ACCESS_DENIED when
+  the backing file's size lags the fd position) and report `GetLastError()`
+  on failure. Windows `mmap_to_disk` round-trips now validate in CI.
 
 ## [1.0.0] — 2024-10-08 — Hutter Prize submission
 
