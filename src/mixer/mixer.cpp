@@ -18,28 +18,25 @@ Mixer::Mixer(const std::valarray<float>& inputs,
     {}
 
 ContextData* Mixer::GetContextData() {
-  ContextData* data;
-  unsigned long long limit = 10000;
-  auto it = context_map_.find(context_); 
-  if (context_map_.size() >= limit && it == context_map_.end()) {
-    data = &context_base_;
-    // data = context_map_[0xDEADBEEF].get();
-    // if (data == nullptr) {
-    //   context_map_[0xDEADBEEF] = std::unique_ptr<ContextData>(
-    //       new ContextData(inputs_.size(), extra_inputs_.size()));
-    //   data = context_map_[0xDEADBEEF].get();
-    // }
-  } else {
-    if (it != context_map_.end()) {
-      data = &it->second;
-    } else {
-      //auto [it, success] = context_map_.emplace(std::piecewise_construct, std::make_tuple(context_), std::make_tuple(inputs_.size(), extra_inputs_.size()));
-      auto [it, success] = context_map_.insert({context_, ContextData(inputs_.size(), extra_inputs_size_)});
-      data = &it->second;
-    }
+  constexpr unsigned long long limit = 10000;
+  // Probe the small context->slot index map first; the ContextData weights
+  // in contexts_ are only touched on a hit, so the probe path stays in
+  // cache (the old ContextData-valued map probed scattered ~2KB buckets).
+  auto it = context_map_.find(context_);
+  if (it != context_map_.end()) {
+    return &contexts_[it->second];
   }
-
-  return data;
+  if (contexts_.size() >= limit) {
+    return &context_base_;
+  }
+  // New context: dedicate a fresh ContextData (zeroed weights), then map
+  // context -> slot. contexts_ only grows inside Mix() before the cached
+  // pointer for this bit is taken, so no pointer is ever invalidated while
+  // cached_data_ is live.
+  const unsigned int slot = static_cast<unsigned int>(contexts_.size());
+  contexts_.emplace_back(inputs_.size(), extra_inputs_size_);
+  context_map_.insert({context_, slot});
+  return &contexts_[slot];
 }
 
 float Mixer::Mix() {

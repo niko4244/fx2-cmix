@@ -34,7 +34,14 @@ class Mixer {
   float p_, learning_rate_;
   const unsigned long long& context_;
   unsigned long long /*max_steps_,*/ steps_;
-  emhash6::HashMap<unsigned int, ContextData> context_map_;
+  // Lookup layout: context_map_ holds only context -> slot indices (small
+  // ~16-byte buckets, cache-friendly probing), while the (large) ContextData
+  // weight vectors live in contexts_ and are touched only on a hit. Same
+  // semantics as the previous ContextData-valued map: first `limit` distinct
+  // contexts get dedicated weights (insertion order), everything after falls
+  // back to context_base_. Compressed output is unchanged.
+  emhash6::HashMap<unsigned int, unsigned int> context_map_;
+  std::vector<ContextData> contexts_;
   ContextData context_base_;
   // Mix() and Perceive() are called with the same context_ within one bit
   // (contexts only change in ContextManager::UpdateContexts, which runs after
