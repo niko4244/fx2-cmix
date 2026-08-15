@@ -219,6 +219,54 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # Manual-only disassembly of the production Linux codegen (workflow_dispatch):
+  # dumps the exact reduction trees the compiler emits for the LSTM loops
+  # (vector width, FMA contraction, accumulator count, final combine order,
+  # scalar tails). A byte-exact rewrite must reproduce these operation
+  # sequences exactly, so we extract them instead of guessing.
+  disasm:
+    name: LSTM disassembly (manual)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install clang-17, make, binutils
+        run: |
+          set -euo pipefail
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 17
+          sudo apt-get update
+          sudo apt-get install -y make binutils
+
+      - name: Build production binary
+        run: |
+          set -euo pipefail
+          make cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
+
+      - name: Dump LSTM reduction codegen
+        run: |
+          set -euo pipefail
+          objdump -d --no-show-raw-insn -M intel -C ./cmix > /tmp/full.dis
+          # Rank functions by FMA density — this is where the reduction
+          # loops live (LSTM functions are inlined into Predictor methods).
+          awk '/^[0-9a-f]+ <[^>]*>:$/ { cur=$0; sub(/^.*</,"",cur); sub(/:$/,"",cur) }
+               /vfmadd/ { cnt[cur]++ }
+               END { for (f in cnt) print cnt[f], f }' /tmp/full.dis | sort -rn | head -15
+          echo "===== LSTM function bodies (Lstm* symbols) ====="
+          awk '/^[0-9a-f]+ <[^>]*>:$/ { in_fn = ($0 ~ /Lstm/) }
+               in_fn { print }' /tmp/full.dis
+
+      - name: Upload full disassembly
+        uses: actions/upload-artifact@v4
+        with:
+          name: lstm-disasm
+          path: /tmp/full.dis
+          if-no-files-found: error
+          retention-days: 14
+
   # Every push must produce byte-identical compressed output to its parent
   # commit (same platform, same flags). Guards the "safe speedups" work: any
   # optimization that changes the compressed bytes fails CI and is reverted.
