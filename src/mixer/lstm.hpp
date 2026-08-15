@@ -134,12 +134,50 @@ inline std::valarray<float>& Lstm::Predict(unsigned int input) {
       std::copy(start, start + num_cells_, start2);
     }
   }
-  for (unsigned int i = 0; i < output_size_; ++i) {
-    float sum = 0;
-    for (unsigned int j = 0; j < hidden_.size(); ++j) {
-      sum += hidden_[j] * output_layer_[epoch_][i][j];
+  // Output projection reconstructed BY CONSTRUCTION, matching clang-17's
+  // codegen for the original loop (see tools/redtest.cpp and the disasm
+  // job): 4 x 8-lane FMA accumulators over 32-element blocks (all-zero
+  // seed), the reduce (y1+y0)+(y3+y2), then a forward scalar FMA tail,
+  // then expf. The reduce's partial sums are pinned through a volatile
+  // round-trip (fast-math re-pairs the tree otherwise — the pairing lives
+  // in register allocation, invisible to instruction-level diffs); the
+  // tail runs under reassociate(off). expf stays a libm call (compiler-
+  // independent).
+  {
+    const int N = (int)hidden_.size();
+    const int M = (N / 32) * 32;
+    const float* h = N > 0 ? &hidden_[0] : nullptr;
+    for (unsigned int i = 0; i < output_size_; ++i) {
+      const float* w = &output_layer_[epoch_][i][0];
+      __m256 y0 = _mm256_setzero_ps(), y1 = _mm256_setzero_ps();
+      __m256 y2 = _mm256_setzero_ps(), y3 = _mm256_setzero_ps();
+      for (int b = 0; b < M; b += 32) {
+        y0 = _mm256_fmadd_ps(_mm256_loadu_ps(w + b),
+                             _mm256_loadu_ps(h + b), y0);
+        y1 = _mm256_fmadd_ps(_mm256_loadu_ps(w + b + 8),
+                             _mm256_loadu_ps(h + b + 8), y1);
+        y2 = _mm256_fmadd_ps(_mm256_loadu_ps(w + b + 16),
+                             _mm256_loadu_ps(h + b + 16), y2);
+        y3 = _mm256_fmadd_ps(_mm256_loadu_ps(w + b + 24),
+                             _mm256_loadu_ps(h + b + 24), y3);
+      }
+      float sum;
+      {
+#pragma clang fp reassociate(off) contract(off)
+        __m256 t0 = _mm256_add_ps(y1, y0);
+        __m256 t1 = _mm256_add_ps(y3, y2);
+        volatile __m256 v0 = t0, v1 = t1;
+        __m256 t2 = _mm256_add_ps(v1, v0);
+        __m128 x = _mm_add_ps(_mm256_castps256_ps128(t2),
+                              _mm256_extractf128_ps(t2, 1));
+        x = _mm_add_ps(x, _mm_shuffle_pd(x, x, 0x1));
+        x = _mm_add_ss(x, _mm_movehdup_ps(x));
+        sum = _mm_cvtss_f32(x);
+      }
+      for (int j = M; j < N; ++j)
+        sum = __builtin_fmaf(w[j], h[j], sum);
+      output_[epoch_][i] = expf(sum);
     }
-    output_[epoch_][i] = exp(sum);
   }
   output_[epoch_] /= output_[epoch_].sum();
   int epoch = epoch_;

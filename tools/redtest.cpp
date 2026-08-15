@@ -60,10 +60,51 @@ static float new_matvec(const float* w, const float* in, int is) {
   return f;
 }
 
+// ---- the LSTM output projection: same 4-acc dot but NO seed and a
+//      forward tail (hidden_.size()=201 -> M=192, tail 9) ----
+static float old_proj(const float* w, const float* in) {
+  float sum = 0;
+  for (int j = 0; j < N; ++j) sum += in[j] * w[j];
+  return sum;
+}
+
+static float new_proj(const float* w, const float* in) {
+  const int M = (N / 32) * 32;
+  __m256 y0 = _mm256_setzero_ps(), y1 = _mm256_setzero_ps();
+  __m256 y2 = _mm256_setzero_ps(), y3 = _mm256_setzero_ps();
+  for (int b = 0; b < M; b += 32) {
+    y0 = _mm256_fmadd_ps(_mm256_loadu_ps(w + b), _mm256_loadu_ps(in + b), y0);
+    y1 = _mm256_fmadd_ps(_mm256_loadu_ps(w + b + 8), _mm256_loadu_ps(in + b + 8), y1);
+    y2 = _mm256_fmadd_ps(_mm256_loadu_ps(w + b + 16), _mm256_loadu_ps(in + b + 16), y2);
+    y3 = _mm256_fmadd_ps(_mm256_loadu_ps(w + b + 24), _mm256_loadu_ps(in + b + 24), y3);
+  }
+  float sum;
+  {
+#pragma clang fp reassociate(off) contract(off)
+    __m256 t0 = _mm256_add_ps(y1, y0);
+    __m256 t1 = _mm256_add_ps(y3, y2);
+    volatile __m256 v0 = t0, v1 = t1;
+    __m256 t2 = _mm256_add_ps(v1, v0);
+    __m128 x = _mm_add_ps(_mm256_castps256_ps128(t2), _mm256_extractf128_ps(t2, 1));
+    x = _mm_add_ps(x, _mm_shuffle_pd(x, x, 0x1));
+    x = _mm_add_ss(x, _mm_movehdup_ps(x));
+    sum = _mm_cvtss_f32(x);
+  }
+  for (int j = M; j < N; ++j) sum = __builtin_fmaf(w[j], in[j], sum);
+  return sum;
+}
+
 static void test_case(const char* tag, const float* w, const float* in,
                       int is) {
   float a = old_matvec(w, in, is);
   float b = new_matvec(w, in, is);
+  printf("%-14s old=%a new=%a %s\n", tag, (double)a, (double)b,
+         memcmp(&a, &b, 4) == 0 ? "BIT-EQUAL" : "DIFFER");
+}
+
+static void proj_case(const char* tag, const float* w, const float* in) {
+  float a = old_proj(w, in);
+  float b = new_proj(w, in);
   printf("%-14s old=%a new=%a %s\n", tag, (double)a, (double)b,
          memcmp(&a, &b, 4) == 0 ? "BIT-EQUAL" : "DIFFER");
 }
@@ -90,5 +131,18 @@ int main(int argc, char** argv) {
   for (int j = 0; j < N + o; ++j) w[j] = 1.0f;
   for (int j = 0; j < N; ++j) in[j] = 1.0f;
   test_case("all-ones", w, in, 3);
+  // Output projection (no seed): the real length is hidden_.size()=201.
+  for (int c = 0; c < 3; ++c) {
+    N = cases_n[c == 0 ? 1 : c == 1 ? 4 : 0];  // 457, 128, 657
+    for (int j = 0; j < N; ++j) w[j] = d(rng);
+    for (int j = 0; j < N; ++j) in[j] = d(rng);
+    char tag[32];
+    snprintf(tag, sizeof tag, "proj N=%d", N);
+    proj_case(tag, w, in);
+  }
+  N = 201;
+  for (int j = 0; j < N; ++j) w[j] = d(rng);
+  for (int j = 0; j < N; ++j) in[j] = d(rng);
+  proj_case("proj N=201", w, in);
   return 0;
 }
