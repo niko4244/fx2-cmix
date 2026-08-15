@@ -5,18 +5,6 @@
 #include <fstream>
 #include <iostream>
 
-// output_layer_ update in Lstm::Perceive. Was `output_layer_[e][i] -= lr_err
-// * hidden_` (valarray temp, two roundings); contraction-off reproduces that
-// rounding exactly. The other pre-existing scalar loops in Perceive keep
-// their original FMA behavior.
-static inline void lstm_update_output_layer(std::valarray<float>& out,
-    const std::valarray<float>& hidden, float lr_err) {
-#pragma clang fp contract(off)
-  for (unsigned int j = 0; j < hidden.size(); ++j) {
-    out[j] -= lr_err * hidden[j];
-  }
-}
-
 inline Lstm::Lstm(unsigned int input_size, unsigned int output_size, unsigned int
     num_cells, unsigned int num_layers, int horizon, float learning_rate,
     float gradient_clip) : input_history_(horizon),
@@ -127,9 +115,8 @@ inline std::valarray<float>& Lstm::Perceive(unsigned int input) {
 //    if (i == input) error = output_[last_epoch][i] - 1;
 //    else error = output_[last_epoch][i];
     float error = (i == input) ? (output_[last_epoch][i] - 1) : output_[last_epoch][i];
-    const float lr_err = learning_rate_ * error;
     output_layer_[epoch_][i] = output_layer_[last_epoch][i];
-    lstm_update_output_layer(output_layer_[epoch_][i], hidden_, lr_err);
+    output_layer_[epoch_][i] -= learning_rate_ * error * hidden_;
   }
   return Predict(input);
 }
@@ -154,9 +141,6 @@ inline std::valarray<float>& Lstm::Predict(unsigned int input) {
     }
     output_[epoch_][i] = exp(sum);
   }
-  // Kept verbatim from the original: the sum reduction must keep its exact
-  // valarray form for byte-identical results (vectorized partial-sum trees
-  // can differ for a manually written loop).
   output_[epoch_] /= output_[epoch_].sum();
   int epoch = epoch_;
   ++epoch_;

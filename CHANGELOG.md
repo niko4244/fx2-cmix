@@ -28,21 +28,24 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
   `MixerInput::SetInput` (called ~num_models times per bit), and ~10% in
   `Mixer::Mix`/`GetContextData` (double hash lookup per bit):
   - `Sigmoid::Logit` and the `MixerInput` setters are now inline in their
-    headers (identical arithmetic, call overhead removed).
+    headers (identical arithmetic, call overhead removed). Kept.
   - `Mixer::Mix` caches the resolved `ContextData*`; `Perceive` reuses it
     for the same bit instead of a second hash lookup (contexts only change
-    in `UpdateContexts`, after the mixer Perceive loop).
-  - LSTM `Adam`, `ForwardPass`, `BackwardPass`, `Perceive`, and `Predict`
-    rewritten from valarray expression temporaries to scalar loops.
-  - These rewrites are byte-exact only with FP contraction disabled: the
-    merged scalar loops would have let clang contract `a*b+c` into a single
-    FMA (one rounding) where the original valarray expressions rounded each
-    intermediate into a heap temporary (two roundings). The rewritten loops
-    live in `#pragma clang fp contract(off)` helpers so they reproduce the
-    valarray's per-operation rounding exactly, while untouched scalar loops
-    (e.g. the LSTM matvec reductions) keep their original FMA contraction.
-  - All of the above are verified byte-identical to the parent commit by
-    the new output-identity CI job.
+    in `UpdateContexts`, after the mixer Perceive loop). Kept.
+  - An LSTM valarray-to-scalar-loop rewrite (the ~30% target) was tried
+    and **reverted**: the output-identity job proved it could not be made
+    byte-identical. Even with `#pragma clang fp contract(off)` on the
+    elementwise loops and the reductions kept in their exact valarray form,
+    compressed output still differed (byte 446 vs the pre-optimization
+    baseline) — the LSTM's reduction loops (matvec, transpose) are
+    auto-vectorized with reassociation, and their partial-sum trees are
+    sensitive to the surrounding code, so any restructuring perturbs the
+    rounded results. Byte-identity is a hard requirement (Hutter Prize
+    archive), so the rewrite stays out until/unless it can be proven
+    bit-exact.
+  - The kept changes are pure call-overhead/lookup reductions with no FP
+    arithmetic change; the output-identity and PPMd-neutrality jobs verify
+    them byte-identical against the pre-optimization baseline.
 
 ### Added
 - GitHub Actions CI (`.github/workflows/ci.yml`):
