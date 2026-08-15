@@ -98,8 +98,16 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
     7-byte stores replace the constant-size `memset` (no libc-inlining
     dependency) and a `#pragma clang loop unroll(enable)` hints the
     fixed-trip-count scan. Same-run benchmark measured **-0.5% vs parent
-    (within the ±1.5% channel noise)** — neutral; kept for the documented
+    (    within the ±1.5% channel noise)** — neutral; kept for the documented
     tie-breaking constraint and the self-contained miss path.
+- **Accumulated safe-speedups measured in one same-run A/B** (via the new
+  `Benchmark-baseline:` override): HEAD (Perceive rewrite + GetContextData
+  slot-map + E1 miss-path tighten) vs the pre-optimization tree `5d0768a`
+  — **-2.1%** (14830 vs 15145 ms on `-n prof_input/input`, min of 2 reps
+  each). That is above the channel's noise floor (identical-code runs
+  measured +1.5% and -0.6%), so the accumulated wins are real; each piece
+  was individually below single-run resolution, which is exactly why the
+  accumulated A/B against a known-good tree was needed.
 - **CI trimmed** now that the PPMd heap-remap crash is fixed and proven
   byte-neutral: dropped the gdb/debug backtrace probe step (its job —    catching the flaky crash — is done). The Linux job now runs real
   lossless round-trips (`-n`, `-c`, and dictionary paths) instead of the
