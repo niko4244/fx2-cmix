@@ -24,6 +24,19 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
   Byte-exactness is gated by the identity job comparing against
   `a45952b` (the pre-rewrite tree).
 
+  Two fast-math hazards were found and fixed during the gate:
+  (1) clang re-paired the horizontal reduce's partial-sum tree under
+  `-ffp-model=fast` (`(y3+y0)+(y2+y1)` vs the emitted `(y1+y0)+(y3+y2)`)
+  — the pairing lives in register allocation, so it is invisible to
+  instruction-level diffs and survived `#pragma clang fp reassociate(off)`
+  in the real function's context (the standalone harness held the
+  pairing, which is why it reported a false BIT-EQUAL). Fixed by forcing
+  the two partial sums through a volatile round-trip so no pass can
+  regroup them; (2) the scalar FMA tail runs under `reassociate(off)`
+  so fast-math cannot re-tree it. **Identity gate PASSED**: the
+  reconstructed LSTM produces byte-identical compressed output to
+  `a45952b` (both 180642 bytes on the CI corpus).
+
 ### Added
 - GitHub Actions CI (`.github/workflows/ci.yml`):
   - **Output identity (HEAD vs parent)** job: every push must produce
