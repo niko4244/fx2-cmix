@@ -52,6 +52,28 @@ jobs:
             | grep -E "Maximum resident|Elapsed|Exit status|Segmentation|bytes ->|bad_alloc|Loaded" | tail -8
           exit 0
 
+      # The crash observed in run #2 is flaky (reproduces under gdb, not in
+      # plain runs). Build with symbols (make DEBUG=1) and loop the test to
+      # catch it with a real backtrace.
+      - name: Debug build + flaky-crash backtrace
+        run: |
+          set +e
+          make clean
+          make cmix MARCH=core-avx2 DEBUG=1 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
+          echo "=== 8 plain runs: -n (flakiness + RSS probe) ==="
+          for i in $(seq 1 8); do
+            /usr/bin/time -v ./cmix -n prof_input/input /tmp/probe_$i.bin 2>&1 \
+              | grep -E "Exit status|Maximum resident" | tr -d '\t' | tr '\n' ' '; echo "(run $i)"
+          done
+          echo "=== 6 gdb runs: -n (backtrace) ==="
+          for i in $(seq 1 6); do
+            gdb -batch -ex "set pagination off" -ex run -ex "bt 30" \
+              --args ./cmix -n prof_input/input /tmp/gdb_$i.bin 2>&1 \
+              | grep -E "Program received|#[0-9]+ 0x|#[0-9]+ [a-zA-Z_]" | head -35
+            echo "(gdb run $i done)"
+          done
+          exit 0
+
   windows-mingw-build:
     name: Windows (MinGW clang) build + round-trip tests
     runs-on: windows-latest
@@ -69,6 +91,8 @@ jobs:
           update: false
           install: >-
             make
+            diffutils
+            coreutils
             mingw-w64-x86_64-clang
             mingw-w64-x86_64-make
             mingw-w64-x86_64-gcc-libs
