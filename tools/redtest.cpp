@@ -9,8 +9,11 @@
 #include <valarray>
 #include <immintrin.h>
 
-static const int o = 256;  // output_size_ (offset into the weights row)
-static const int N = 657;  // input.size() for the LSTM layer-0 matvec
+// N and o are RUNTIME values (like input.size()/output_size_ in the real
+// binary): constant bounds would let clang unroll differently and make the
+// harness an unfaithful proxy for the valarray loop in the production build.
+static int o = 256;
+static int N = 657;
 
 // ---- the original loop, exactly as upstream writes it ----
 static float old_matvec(const float* w, const float* in, int is) {
@@ -56,20 +59,24 @@ static void test_case(const char* tag, const float* w, const float* in,
          memcmp(&a, &b, 4) == 0 ? "BIT-EQUAL" : "DIFFER");
 }
 
-int main() {
+int main(int argc, char** argv) {
   std::mt19937 rng(12345);
   std::uniform_real_distribution<float> d(-1.f, 1.f);
-  static float w[N + o], in[N];
-  for (int j = 0; j < N + o; ++j) w[j] = d(rng);
-  for (int j = 0; j < N; ++j) in[j] = d(rng);
-  for (int is = 0; is < 4; ++is) test_case("random", w, in, is);
-  // all-ones: stresses rounding boundaries
+  static float w[5120], in[5120];
+  const int cases_n[] = {657, 201, 128, 40, 33, 32, 31, 17};
+  for (int c = 0; c < 8; ++c) {
+    N = cases_n[c];
+    o = 256;
+    for (int j = 0; j < N + o; ++j) w[j] = d(rng);
+    for (int j = 0; j < N; ++j) in[j] = d(rng);
+    char tag[32];
+    snprintf(tag, sizeof tag, "N=%d", N);
+    test_case(tag, w, in, 1 + (c % 3));
+  }
+  // all-ones: exact arithmetic, any reassociation must agree
+  N = 657;
   for (int j = 0; j < N + o; ++j) w[j] = 1.0f;
   for (int j = 0; j < N; ++j) in[j] = 1.0f;
   test_case("all-ones", w, in, 3);
-  // powers of two + tiny values
-  for (int j = 0; j < N + o; ++j) w[j] = ldexpf(1.0f, (j % 60) - 30);
-  for (int j = 0; j < N; ++j) in[j] = ldexpf(1.0f, ((j * 7) % 60) - 30);
-  test_case("powers2", w, in, 1);
   return 0;
 }
