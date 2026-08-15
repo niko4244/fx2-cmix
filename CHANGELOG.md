@@ -77,6 +77,17 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
   - `Mixer::Mix` (9.4%) left untouched: its dot products are pure reads,
     already auto-vectorized under `-ffp-model=fast`; any manual
     restructuring risks reassociating the reduction.
+  - **`fxcmv1::E1/E::get` miss path examined** (`f53de0f`): the
+    replacement-priority scan cannot be reordered (tie-breaking between
+    equal-priority slots picks the first found — reordering changes which
+    slot is replaced), and the scan is already L1-bound within the 128B
+    entry; the dominant cost is the unavoidable random entry fetch. Two
+    zero-risk tightenings were applied to both union copies: explicit
+    7-byte stores replace the constant-size `memset` (no libc-inlining
+    dependency) and a `#pragma clang loop unroll(enable)` hints the
+    fixed-trip-count scan. Same-run benchmark measured **-0.5% vs parent
+    (within the ±1.5% channel noise)** — neutral; kept for the documented
+    tie-breaking constraint and the self-contained miss path.
 - **CI trimmed** now that the PPMd heap-remap crash is fixed and proven
   byte-neutral: dropped the gdb/debug backtrace probe step (its job —    catching the flaky crash — is done). The Linux job now runs real
   lossless round-trips (`-n`, `-c`, and dictionary paths) instead of the
