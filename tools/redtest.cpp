@@ -19,8 +19,10 @@ int main() {
   float ref = 0;  // -ffp-model=fast: clang's own reduction tree
   for (int j = 0; j < N; ++j) ref += w[j] * in[j];
   float seq = 0;
+  {
 #pragma clang fp reassociate(off) contract(off)
-  for (int j = 0; j < N; ++j) seq = __builtin_fmaf(w[j], in[j], seq);
+    for (int j = 0; j < N; ++j) seq = __builtin_fmaf(w[j], in[j], seq);
+  }
   printf("ref(fast-math tree)= %.9g\n", ref);
   printf("seq(fixed-order fma)= %.9g\n", seq);
   printf("equal: %s\n", ref == seq ? "YES" : "NO");
