@@ -22,6 +22,13 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
     runners are unreliable — a re-profile of *unchanged* code showed the
     LSTM dropping 66s → 37s (runner variance), so speedups are measured
     per-call, never by raw totals across runs.
+  - **CI bug fixed**: the output-identity "Determine comparison baseline"
+    step died under `set -euo pipefail` whenever a commit message had no
+    `Identity-baseline:` line (`grep` exits 1 on no match). Masked by
+    earlier commits all carrying the override; the `always_inline`
+    experiment commit (no override) exposed it. Fixed with `|| true` on
+    the grep pipeline — commits without an override now correctly default
+    to `HEAD~1` again.
 
 ### Changed
 - **Second gprof pass on the current tree** (`-n` on `prof_input/input2`, via
@@ -38,10 +45,15 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
     compressed output is byte-identical, but now single-pass, allocation-
     free, and vectorizable. Before/after gprof (same input): per-call cost
     42.7ns → 33.5ns (-21%).
-  - `fxcmv1::E1::get` (~4.7%, 102M calls): an attempt to drop the `noinline`
-    attribute was **reverted as a no-op** — a re-profile showed the call
-    count unchanged (clang's inliner declined the probe loop + memset at the
-    hot call sites), so the attribute removal had no codegen effect.
+  - `fxcmv1::E1::get` (~4.7%, 102M calls): two experiments, both reverted.
+    (1) Dropping `noinline` was a no-op — the call count stayed identical
+    (clang's inliner declined the probe loop + memset at the hot call
+    sites). (2) `__attribute__((always_inline))` **made it worse**: the
+    byte-context path (E1::get + its three `ContextMap*::mix` callers) went
+    from ~15.6s to ~23.1s (+48%) and the whole profile drifted up 7-56%
+    across untouched functions — classic i-cache damage in this
+    i-cache-sensitive codebase. The out-of-line version wins; both changes
+    reverted (final state = original `noinline`).
   - `Mixer::Mix` (9.4%) left untouched: its dot products are pure reads,
     already auto-vectorized under `-ffp-model=fast`; any manual
     restructuring risks reassociating the reduction.

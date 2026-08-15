@@ -255,7 +255,7 @@ jobs:
       - name: Determine comparison baseline
         run: |
           set -euo pipefail
-          BASELINE=$(git log -1 --format='%B' | grep -oE '^Identity-baseline: [0-9a-f]{7,40}' | awk '{print $2}')
+          BASELINE=$(git log -1 --format='%B' | grep -oE '^Identity-baseline: [0-9a-f]{7,40}' | awk '{print $2}' || true)
           if [ -z "$BASELINE" ]; then BASELINE="HEAD~1"; fi
           echo "baseline=$BASELINE" >> "$GITHUB_ENV"
           echo "comparing HEAD against $BASELINE"
