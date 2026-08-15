@@ -248,6 +248,36 @@ jobs:
           set -euo pipefail
           make cmix MARCH=core-avx2 DEBUG=1 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
 
+      # Decisive experiment: does clang's fast-math v8f32 reduction (the
+      # vshufpd/vmovshdup/vaddss tail) compute the true sum? Compile the
+      # same dot-product loop both ways with the production flags and print.
+      - name: Test clang-17 reduction semantics
+        run: |
+          set -euo pipefail
+          cat > /tmp/redtest.cpp <<'EOF'
+#include <cstdio>
+#include <random>
+int main() {
+  const int N = 657;
+  static float w[N], in[N];
+  std::mt19937 rng(12345);
+  std::uniform_real_distribution<float> d(-1.f, 1.f);
+  for (int j = 0; j < N; ++j) { w[j] = d(rng); in[j] = d(rng); }
+  volatile float sink = 0;
+  float ref = 0;                 // -ffp-model=fast: clang's own tree
+  for (int j = 0; j < N; ++j) ref += w[j] * in[j];
+  float seq = 0;
+  #pragma clang fp reassociate(off) contract(off)
+  for (int j = 0; j < N; ++j) seq = __builtin_fmaf(w[j], in[j], seq);
+  printf("ref(fast-math tree)= %.9g\n", ref);
+  printf("seq(fixed-order fma)= %.9g\n", seq);
+  sink = ref + seq;
+  return sink == 0;
+}
+EOF
+          clang++-17 -O3 -march=core-avx2 -ffp-model=fast -std=c++17 /tmp/redtest.cpp -o /tmp/redtest
+          /tmp/redtest
+
       - name: Dump LSTM reduction codegen
         run: |
           set -euo pipefail
