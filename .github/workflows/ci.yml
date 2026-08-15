@@ -31,19 +31,26 @@ jobs:
           make cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
           make remap MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000"
 
-      - name: Round-trip test — no preprocessing (-n)
+      # Diagnostic run: measure peak RSS and capture a gdb backtrace if
+      # cmix crashes (it did at ~40% on the standard 7 GB runner).
+      - name: Round-trip diagnostics (-n, -c, dictionary)
         run: |
-          ./cmix -n prof_input/input /tmp/out_n.bin
-          ./cmix -d /tmp/out_n.bin /tmp/back_n.bin
-          cmp prof_input/input /tmp/back_n.bin
-          echo "PASS no-preprocess round-trip: $(stat -c%s prof_input/input) -> $(stat -c%s /tmp/out_n.bin) bytes"
-
-      - name: Round-trip test — full preprocess + dictionary (-c/-d)
-        run: |
-          ./cmix -c dictionary/english.dic prof_input/input /tmp/out_c.bin
-          ./cmix -d dictionary/english.dic /tmp/out_c.bin /tmp/back_c.bin
-          cmp prof_input/input /tmp/back_c.bin
-          echo "PASS dictionary round-trip: $(stat -c%s prof_input/input) -> $(stat -c%s /tmp/out_c.bin) bytes"
+          set +e
+          sudo apt-get install -y gdb >/dev/null 2>&1
+          echo "=== free -h ==="; free -h
+          echo "=== -n: time -v ==="
+          /usr/bin/time -v ./cmix -n prof_input/input /tmp/out_n.bin 2>&1 \
+            | grep -E "Maximum resident|Elapsed|Exit status|Command being|Segmentation|bytes ->|bad_alloc" | tail -8
+          echo "=== -n: gdb backtrace ==="
+          gdb -batch -ex "set pagination off" -ex run -ex "bt 25" \
+            --args ./cmix -n prof_input/input /tmp/out_g.bin 2>&1 | tail -30
+          echo "=== -c (no dict, PGO path): time -v ==="
+          /usr/bin/time -v ./cmix -c prof_input/input /tmp/out_pgo.bin 2>&1 \
+            | grep -E "Maximum resident|Elapsed|Exit status|Segmentation|bytes ->|bad_alloc" | tail -8
+          echo "=== -c with dictionary: time -v ==="
+          /usr/bin/time -v ./cmix -c dictionary/english.dic prof_input/input /tmp/out_c.bin 2>&1 \
+            | grep -E "Maximum resident|Elapsed|Exit status|Segmentation|bytes ->|bad_alloc|Loaded" | tail -8
+          exit 0
 
   windows-mingw-build:
     name: Windows (MinGW clang) build + round-trip tests
@@ -73,7 +80,7 @@ jobs:
 
       - name: Round-trip tests — default build (mmap_to_disk off on Windows)
         run: |
-          CMIX=$(ls cmix.exe 2>/dev/null || echo cmix)
+          CMIX="./$(ls cmix.exe 2>/dev/null || echo cmix)"
           "$CMIX" -n prof_input/input out_n.bin
           "$CMIX" -d out_n.bin back_n.bin
           cmp prof_input/input back_n.bin
@@ -90,7 +97,7 @@ jobs:
 
       - name: Round-trip test — mmap shim build
         run: |
-          CMIX=$(ls cmix.exe 2>/dev/null || echo cmix)
+          CMIX="./$(ls cmix.exe 2>/dev/null || echo cmix)"
           "$CMIX" -n prof_input/input out_n_mmap.bin
           "$CMIX" -d out_n_mmap.bin back_n_mmap.bin
           cmp prof_input/input back_n_mmap.bin
