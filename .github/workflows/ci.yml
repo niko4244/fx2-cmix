@@ -273,6 +273,11 @@ jobs:
           awk '/^[0-9a-f]+ <[^>]*>:$/ { in_fn = ($0 ~ /Lstm/) }
                in_fn { print }' /tmp/full.dis
 
+      - name: Dump rodata floats near the LSTM constants
+        run: |
+          set -euo pipefail
+          objdump -s -j .rodata ./cmix | awk '/^ *391/ || /^ *392/ { print }'
+
       - name: Upload full disassembly
         uses: actions/upload-artifact@v4
         with:

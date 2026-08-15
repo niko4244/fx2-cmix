@@ -111,10 +111,11 @@ static void test_case(const char* tag, const float* w, const float* in,
 
 // ---- the LayerNorm sum: (norm_*norm_).sum(), the reversed-accumulate
 //      tree with backward tail (norm_ size = num_cells_ = 200) ----
+// old uses the real valarray product+sum (a plain loop is an UNFAITHFUL
+// proxy: clang vectorizes it with a forward tree, not the reversed one).
 static float old_sqsum(const float* x) {
-  float s = 0;
-  for (int j = 0; j < N; ++j) s += x[j] * x[j];
-  return s;
+  std::valarray<float> xv(x, N);
+  return (xv * xv).sum();
 }
 
 static float new_sqsum(const float* x) {
@@ -175,10 +176,11 @@ static void proj_case(const char* tag, const float* w, const float* in) {
 
 // ---- softmax sum: seed o[0] in lane 0, vector over elements 1..M where
 //      M = (N-1)&~31, sequential scalar tail, then * (1/sum) ----
+// old uses the real valarray .sum() (a plain loop is an UNFAITHFUL proxy:
+// clang vectorizes it differently than the valarray method).
 static float old_sftsum(const float* x) {
-  float s = 0;
-  for (int j = 0; j < N; ++j) s += x[j];
-  return s;
+  std::valarray<float> xv(x, N);
+  return xv.sum();
 }
 
 static float new_sftsum(const float* x) {
@@ -351,7 +353,10 @@ static void new_adam(float* g, float* m, float* v, float* w, float lr, float t) 
     v[j] = __builtin_fmaf(g[j] * g[j], (1.0f - beta2), v[j]);
     const float xv = __builtin_fmaf(v[j], inv_den2, eps);
     const float r = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(xv)));
-    const float rr = (r * -0.5f) * __builtin_fmaf(r, xv * r, -3.0f);
+    // +0.5: the w-path Newton constant (rodata 39220) is the negative of
+    // the alpha path's (39204), giving rr ~ -1/sqrt(xv) so the emitted
+    // w + alpha*m*rr equals the source's subtraction.
+    const float rr = (r * 0.5f) * __builtin_fmaf(r, xv * r, -3.0f);
     if (t < UPDATE_LIMIT) {
       const float rcp = _mm_cvtss_f32(_mm_rcp_ss(_mm_set_ss(den1)));
       const float t1 = rr * rcp;
