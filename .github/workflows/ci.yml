@@ -256,6 +256,9 @@ jobs:
           set -euo pipefail
           clang++-17 -O3 -march=core-avx2 -ffp-model=fast -std=c++17 tools/redtest.cpp -o /tmp/redtest
           /tmp/redtest
+          # The harness's own codegen: how does clang structure the old
+          # valarray-style loop vs the intrinsic reconstruction?
+          objdump -d --no-show-raw-insn -M intel -C /tmp/redtest | awk '/^[0-9a-f]+ <.*>:$/ { sub(/^[0-9a-f]+ </,""); sub(/>:$/,""); if ($0 ~ /matvec/) show=1; else show=0 } show { print }'
 
       - name: Dump LSTM reduction codegen
         run: |

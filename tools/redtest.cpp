@@ -37,13 +37,18 @@ static float new_matvec(const float* w, const float* in, int is) {
     y2 = _mm256_fmadd_ps(_mm256_loadu_ps(w + o + b + 16), _mm256_loadu_ps(in + b + 16), y2);
     y3 = _mm256_fmadd_ps(_mm256_loadu_ps(w + o + b + 24), _mm256_loadu_ps(in + b + 24), y3);
   }
-  __m256 t0 = _mm256_add_ps(y1, y0);
-  __m256 t1 = _mm256_add_ps(y3, y2);
-  __m256 t2 = _mm256_add_ps(t1, t0);
-  __m128 x = _mm_add_ps(_mm256_castps256_ps128(t2), _mm256_extractf128_ps(t2, 1));
-  x = _mm_add_ps(x, _mm_shuffle_pd(x, x, 0x1));
-  x = _mm_add_ss(x, _mm_movehdup_ps(x));
-  f = _mm_cvtss_f32(x);
+  // Same pinned reduce as the real binary: clang re-pairs the partial-sum
+  // tree under fast-math (broke byte-identity), so pin it by construction.
+  {
+#pragma clang fp reassociate(off) contract(off)
+    __m256 t0 = _mm256_add_ps(y1, y0);
+    __m256 t1 = _mm256_add_ps(y3, y2);
+    __m256 t2 = _mm256_add_ps(t1, t0);
+    __m128 x = _mm_add_ps(_mm256_castps256_ps128(t2), _mm256_extractf128_ps(t2, 1));
+    x = _mm_add_ps(x, _mm_shuffle_pd(x, x, 0x1));
+    x = _mm_add_ss(x, _mm_movehdup_ps(x));
+    f = _mm_cvtss_f32(x);
+  }
   {
 #pragma clang fp reassociate(off) contract(off)
     for (int j = M; j < N; ++j) f = __builtin_fmaf(w[o + j], in[j], f);

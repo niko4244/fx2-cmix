@@ -143,14 +143,23 @@ inline void LstmLayer::ForwardPass(NeuronLayer& neurons,
         y3 = _mm256_fmadd_ps(_mm256_loadu_ps(w + output_size_ + b + 24),
                              _mm256_loadu_ps(in + b + 24), y3);
       }
-      __m256 t0 = _mm256_add_ps(y1, y0);
-      __m256 t1 = _mm256_add_ps(y3, y2);
-      __m256 t2 = _mm256_add_ps(t1, t0);
-      __m128 x = _mm_add_ps(_mm256_castps256_ps128(t2),
-                            _mm256_extractf128_ps(t2, 1));
-      x = _mm_add_ps(x, _mm_shuffle_pd(x, x, 0x1));
-      x = _mm_add_ss(x, _mm_movehdup_ps(x));
-      f = _mm_cvtss_f32(x);
+      // The horizontal reduce must NOT be re-paired. The individual
+      // __m256 adds are commutative (a+b == b+a bit-for-bit), so operand
+      // order within each add is free — but the PARTIAL-SUM TREE is not:
+      // under -ffp-model=fast clang reassociated this to (y3+y0)+(y2+y1),
+      // a different rounding tree than the emitted loop's (y1+y0)+(y3+y2),
+      // which broke byte-identity. Pin the exact tree by construction.
+      {
+#pragma clang fp reassociate(off) contract(off)
+        __m256 t0 = _mm256_add_ps(y1, y0);
+        __m256 t1 = _mm256_add_ps(y3, y2);
+        __m256 t2 = _mm256_add_ps(t1, t0);
+        __m128 x = _mm_add_ps(_mm256_castps256_ps128(t2),
+                              _mm256_extractf128_ps(t2, 1));
+        x = _mm_add_ps(x, _mm_shuffle_pd(x, x, 0x1));
+        x = _mm_add_ss(x, _mm_movehdup_ps(x));
+        f = _mm_cvtss_f32(x);
+      }
       // Scalar FMA tail; reassociate(off) keeps it sequential like the
       // emitted loop (fast-math would otherwise re-tree it).
       {
