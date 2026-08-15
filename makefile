@@ -45,7 +45,7 @@ $(info DEBUG build: -g added, binary not stripped)
 CPPFLAGS_PART-THAT-SHOULD-BE-FAST += -g
 CPPFLAGS_PART-THAT-CAN-BE-SLOW    += -g
 STRIPFLAG :=
-else
+else ifndef PROFILE
 STRIPFLAG := -s
 endif
 
