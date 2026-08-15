@@ -1,9 +1,28 @@
 # fx2-cmix
+[![CI](https://github.com/niko4244/fx2-cmix/actions/workflows/ci.yml/badge.svg)](https://github.com/niko4244/fx2-cmix/actions/workflows/ci.yml)
+
 The fx2-cmix is a updated implementation of [fx-cmix](https://github.com/kaitz/fx-cmix). 
 
 [Archive](https://drive.google.com/file/d/14QillUEElT5vR0ttmayRAXlciXuPwDWm/)
 
 Prize awarded on October 8, 2024. http://prize.hutter1.net/
+
+# Development
+
+* **Branches**: `main` is the Hutter Prize submission (stable). `dev` is the
+  work-in-progress branch (Windows port, tooling, experiments).
+* **CI**: every push/PR runs `.github/workflows/ci.yml`, which builds and
+  round-trip-tests on Linux (clang-17) and Windows (MinGW clang). A
+  round-trip test compresses and decompresses `prof_input/input` and checks
+  the result is byte-identical — both with no preprocessing (`-n`) and with
+  the full preprocess + dictionary path (`-c`/`-d`).
+* **mmap_to_disk**: PPM can back its heap with a memory-mapped temp file
+  (`true`) or RAM (`false`). It is `true` on Linux by default and `false` on
+  Windows until the `mman_shim.h` shim is validated at full scale. Override
+  with `-DMMAP_TO_DISK_DEFAULT=0/1` (see `src/models/ppmd.cpp`).
+* **Full-scale validation** (the real enwik9 run, ~65 h / 16 GB RAM) is not
+  part of CI; use `build_and_construct_comp.sh` on a suitable machine.
+* See `CHANGELOG.md` for a running log of all changes.
 
 # Submission Description
 This submission contains fallowing major modifications on top of the recent fx-cmix Hutter Prize winner:

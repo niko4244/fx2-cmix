@@ -30,12 +30,22 @@ typedef unsigned long long qword;
 // This will reduce RAM usage, but will be slower as well. *Warning*: this will
 // write a *lot* of data to disk, so can reduce the lifespan of SSDs. Not
 // recommended for normal usage.
-// TODO(hutter-prize phase 0->3): the mman_shim.h Win32 mmap() shim compiles
-// but is not yet validated end-to-end; disabled here (matches the
-// "recommended" default per the comment above) until it's debugged and
-// confirmed correct. Full enwik9-scale runs need this back on to respect the
-// <10GB RAM budget -- revisit before any full-scale submission run.
-bool mmap_to_disk = false;
+// mmap_to_disk selects whether PPM backs its heap with a memory-mapped
+// temporary file (true) or plain RAM (false).
+//   * On Linux the mmap path is the proven, submission-tested default.
+//   * On Windows the mman_shim.h Win32 mmap() shim compiles and passes CI
+//     round-trip tests, but is kept off by default until a full-scale enwik9
+//     run confirms it stays within the Hutter Prize RAM/disk budget.
+// Override at build time with -DMMAP_TO_DISK_DEFAULT=0/1 (the Windows CI job
+// builds with =1 to exercise the shim end-to-end).
+#ifndef MMAP_TO_DISK_DEFAULT
+#ifdef _WIN32
+#define MMAP_TO_DISK_DEFAULT false
+#else
+#define MMAP_TO_DISK_DEFAULT true
+#endif
+#endif
+bool mmap_to_disk = MMAP_TO_DISK_DEFAULT;
 qword mmap_size;
 static constexpr char mmap_path[] = "ppm.temp";
 

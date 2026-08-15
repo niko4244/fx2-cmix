@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux-build-test:
+    name: Linux (clang-17) build + round-trip tests
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install clang-17, make, upx-ucl
+        run: |
+          set -euo pipefail
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 17
+          sudo apt-get update
+          sudo apt-get install -y upx-ucl make
+
+      - name: Build cmix + remap
+        run: |
+          set -euo pipefail
+          make cmix COREI7=1 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
+          make remap COREI7=1 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000"
+
+      - name: Round-trip test — no preprocessing (-n)
+        run: |
+          ./cmix -n prof_input/input /tmp/out_n.bin
+          ./cmix -d /tmp/out_n.bin /tmp/back_n.bin
+          cmp prof_input/input /tmp/back_n.bin
+          echo "PASS no-preprocess round-trip: $(stat -c%s prof_input/input) -> $(stat -c%s /tmp/out_n.bin) bytes"
+
+      - name: Round-trip test — full preprocess + dictionary (-c/-d)
+        run: |
+          ./cmix -c dictionary/english.dic prof_input/input /tmp/out_c.bin
+          ./cmix -d dictionary/english.dic /tmp/out_c.bin /tmp/back_c.bin
+          cmp prof_input/input /tmp/back_c.bin
+          echo "PASS dictionary round-trip: $(stat -c%s prof_input/input) -> $(stat -c%s /tmp/out_c.bin) bytes"
+
+  windows-mingw-build:
+    name: Windows (MinGW clang) build + round-trip tests
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSYS2 / MinGW64 with clang
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            mingw-w64-x86_64-clang
+            mingw-w64-x86_64-make
+            mingw-w64-x86_64-gcc-libs
+            mingw-w64-x86_64-winpthreads
+
+      - name: Build cmix (default flags)
+        run: |
+          make cmix CC=clang++ COREI7=1 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
+
+      - name: Round-trip tests — default build (mmap_to_disk off on Windows)
+        run: |
+          CMIX=$(ls cmix.exe 2>/dev/null || echo cmix)
+          "$CMIX" -n prof_input/input out_n.bin
+          "$CMIX" -d out_n.bin back_n.bin
+          cmp prof_input/input back_n.bin
+          echo "PASS no-preprocess round-trip (default build)"
+          "$CMIX" -c dictionary/english.dic prof_input/input out_c.bin
+          "$CMIX" -d dictionary/english.dic out_c.bin back_c.bin
+          cmp prof_input/input back_c.bin
+          echo "PASS dictionary round-trip (default build)"
+
+      - name: Rebuild with mmap_to_disk forced on (exercises mman_shim.h)
+        run: |
+          make clean
+          make cmix CC=clang++ COREI7=1 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000 -DMMAP_TO_DISK_DEFAULT=true" -j2
+
+      - name: Round-trip test — mmap shim build
+        run: |
+          CMIX=$(ls cmix.exe 2>/dev/null || echo cmix)
+          "$CMIX" -n prof_input/input out_n_mmap.bin
+          "$CMIX" -d out_n_mmap.bin back_n_mmap.bin
+          cmp prof_input/input back_n_mmap.bin
+          echo "PASS no-preprocess round-trip (mmap shim build)"

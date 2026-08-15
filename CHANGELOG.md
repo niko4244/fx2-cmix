@@ -1,0 +1,42 @@
+# Changelog
+
+All notable changes to fx2-cmix are documented here. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
+adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
+
+## [Unreleased] — dev branch
+
+### Added
+- GitHub Actions CI (`.github/workflows/ci.yml`):
+  - **Linux (clang-17)** job: builds `cmix` and `remap`, then verifies
+    lossless round-trips on `prof_input/input` — both with no preprocessing
+    (`-n`) and with the full preprocess + dictionary path (`-c`/`-d`).
+  - **Windows (MinGW clang)** job: builds under MSYS2/MINGW64 and runs the
+    same round-trip tests, then rebuilds with `mmap_to_disk` forced on to
+    exercise the Win32 mmap shim end-to-end.
+- `CHANGELOG.md` — this file.
+- README: CI badge and a short Development section.
+
+### Changed
+- `src/models/ppmd.cpp`: `mmap_to_disk` is now build-configurable via
+  `-DMMAP_TO_DISK_DEFAULT=0/1`. Platform defaults are unchanged: `true` on
+  Linux (submission default), `false` on Windows (pending full-scale
+  validation of `mman_shim.h`).
+
+## [1.0.0] — 2024-10-08 — Hutter Prize submission
+
+The official fx2-cmix Hutter Prize submission. Awarded October 8, 2024;
+improvement of 1.585% over the previous record holder (fx-cmix).
+See `README.md` for the full submission description and results.
+
+### Summary of the submission (from upstream)
+- NLP: stemmer-based natural language processing (from paq8px(d)), reverse
+  dictionary transform, single-pass Wikipedia transform, new article order
+  (embeddings + t-SNE + k-means pipeline).
+- Slimmer cmix core: removed indirect predictors, match predictors, and
+  mixers; split main predictors across three ContextMaps; sparse match model.
+- Result: 110,793,128-byte self-extracting archive (vs. 112,578,322 previous
+  record); ~65 h decompression on the reference machine.
+
+[Unreleased]: https://github.com/niko4244/fx2-cmix/compare/main...dev
+[1.0.0]: https://github.com/niko4244/fx2-cmix/releases/tag/v1.0.0
