@@ -33,6 +33,14 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
     experiment commit (no override) exposed it. Fixed with `|| true` on
     the grep pipeline — commits without an override now correctly default
     to `HEAD~1` again.
+  - **Wall-clock benchmark job (new)**: same-run A/B on every push — builds
+    HEAD and its parent in one job and times both interleaved on the same
+    runner (`-n prof_input/input`, min of 2 reps each), reporting the delta
+    and uploading a `benchmark-report` artifact. Cross-run totals on shared
+    runners are noise (117s vs 125s for byte-identical code), but an
+    interleaved same-job comparison cancels drift, giving speedup/regression
+    work a stable measurement channel. Informational — the output-identity
+    job remains the correctness gate.
 
 ### Changed
 - **Second gprof pass on the current tree** (`-n` on `prof_input/input2`, via
