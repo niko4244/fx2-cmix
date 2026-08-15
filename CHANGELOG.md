@@ -208,6 +208,12 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
     hottest call path; the float arithmetic is element-identical, and
     every `add()` call site was verified to pass in-range `p` (clp'd
     tables, constants, clamped `p1()`/`st>>2`/`length<<5`).
+    Measured by the same-run benchmark (min-of-3, run `31897685308`):
+    HEAD 15474 ms (spread 2.3%) vs `HEAD~1` 15759 ms (spread 0.3%) →
+    **-1.8%**, above the identical-code noise floor (-0.7% / -1.2%) —
+    the mix3 family's clamp branches + cvt/mul cost more than the
+    self-time share suggested. Identity job: `PASS: HEAD and HEAD~1
+    produce byte-identical compressed output`.
 
 ### Added
 - GitHub Actions CI (`.github/workflows/ci.yml`):
