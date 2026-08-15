@@ -264,29 +264,24 @@ jobs:
         run: |
           set -euo pipefail
           objdump -d --no-show-raw-insn -M intel -C ./cmix > /tmp/full.dis
-          # Rank functions by FMA density — this is where the reduction
-          # loops live (LSTM functions are inlined into Predictor methods).
-          awk '/^[0-9a-f]+ <[^>]*>:$/ { cur=$0; sub(/^.*</,"",cur); sub(/:$/,"",cur) }
-               /vfmadd/ { cnt[cur]++ }
-               END { for (f in cnt) print cnt[f], f }' /tmp/full.dis | sort -rn | head -15
-          echo "===== LSTM function bodies (Lstm* symbols) ====="
-          awk '/^[0-9a-f]+ <[^>]*>:$/ { in_fn = ($0 ~ /Lstm/) }
-               in_fn { print }' /tmp/full.dis
+          # Print the ENTIRE disassembly (the inlined LSTM copies have no
+          # symbol lines, and a name-filter silently drops them).
+          cat /tmp/full.dis
 
       - name: Dump rodata floats near the LSTM constants
         run: |
           set -euo pipefail
-          echo "===== HEAD rodata 391xx/392xx ====="
-          objdump -s -j .rodata ./cmix | awk '/^ *391/ || /^ *392/ { print }'
+          echo "===== HEAD rodata (full section) ====="
+          objdump -s -j .rodata ./cmix
           # Also dump the ORIGINAL (identity-baseline) build's rodata: the
           # LSTM Adam/LayerNorm Newton constants are folded literals whose
           # exact values must be frozen by the reconstruction. The baseline
           # commit carries the pre-reconstruction codegen.
-          echo "===== BASELINE a45952b rodata 391xx/392xx ====="
-          git fetch origin a45952b --depth=1
-          git worktree add --detach /tmp/base a45952b
+          echo "===== BASELINE a45952b rodata (full section) ====="
+          git fetch origin a45952be96eb76cf2930b9da9b3c2536b2c3075a --depth=1
+          git worktree add --detach /tmp/base a45952be96eb76cf2930b9da9b3c2536b2c3075a
           make -C /tmp/base cmix MARCH=core-avx2 DEBUG=1 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
-          objdump -s -j .rodata /tmp/base/cmix | awk '/^ *391/ || /^ *392/ { print }'
+          objdump -s -j .rodata /tmp/base/cmix
 
       - name: Upload full disassembly
         uses: actions/upload-artifact@v4
