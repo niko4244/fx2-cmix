@@ -7,8 +7,11 @@ on:
   workflow_dispatch:
 
 jobs:
+  # workflow_dispatch runs only the manual `profile` job below; the four
+  # correctness jobs are gated to push/PR so a manual re-profile stays fast.
   linux-build-test:
     name: Linux (clang-17) build + round-trip tests
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
@@ -52,6 +55,7 @@ jobs:
 
   windows-mingw-build:
     name: Windows (MinGW clang) build + round-trip tests
+    if: github.event_name != 'workflow_dispatch'
     runs-on: windows-latest
     defaults:
       run:
@@ -108,6 +112,7 @@ jobs:
   # every time that demonstrates the bug on the unfixed code instead.
   ppm-fix-neutrality:
     name: PPMd fix output-neutrality
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout (full history for the parent commit)
@@ -220,6 +225,7 @@ jobs:
   # (Re-profile on the current tree via the manual `profile` job above.)
   output-identity:
     name: Output identity (HEAD vs parent)
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout (full history for the parent commit)

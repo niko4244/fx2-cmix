@@ -15,7 +15,13 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
   - **gprof profile job (manual only)**: `workflow_dispatch`-triggered,
     never runs on normal pushes. Builds with `PROFILE=1` and reports the
     top self-time functions on `prof_input/input2`, so "safe speedup" work
-    can re-profile the current tree on demand.
+    can re-profile the current tree on demand. The other four jobs are
+    gated out of `workflow_dispatch` runs, so a manual profile dispatches
+    only the profile job.
+  - **Profiling caveat documented**: cross-run comparisons on shared GitHub
+    runners are unreliable — a re-profile of *unchanged* code showed the
+    LSTM dropping 66s → 37s (runner variance), so speedups are measured
+    per-call, never by raw totals across runs.
 
 ### Changed
 - **Second gprof pass on the current tree** (`-n` on `prof_input/input2`, via
@@ -30,10 +36,12 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
     `__restrict__` pointers and `#pragma clang fp contract(off)` — same
     two-rounding arithmetic as the valarray version (no FMA fusion), so
     compressed output is byte-identical, but now single-pass, allocation-
-    free, and vectorizable.
-  - `fxcmv1::E1::get` (~4.7%, 102M calls): dropped the `noinline` attribute
-    so the byte-context loops can fold the call overhead. Inlining is
-    semantics-preserving; output unchanged.
+    free, and vectorizable. Before/after gprof (same input): per-call cost
+    42.7ns → 33.5ns (-21%).
+  - `fxcmv1::E1::get` (~4.7%, 102M calls): an attempt to drop the `noinline`
+    attribute was **reverted as a no-op** — a re-profile showed the call
+    count unchanged (clang's inliner declined the probe loop + memset at the
+    hot call sites), so the attribute removal had no codegen effect.
   - `Mixer::Mix` (9.4%) left untouched: its dot products are pure reads,
     already auto-vectorized under `-ffp-model=fast`; any manual
     restructuring risks reassociating the reduction.
