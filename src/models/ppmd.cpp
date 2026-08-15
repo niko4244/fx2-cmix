@@ -1407,24 +1407,15 @@ void PPMD::ByteUpdate() {
   }
   ByteModel::ByteUpdate();
   probs_ /= probs_.sum();
-  if (mmap_to_disk && counter_ % 20000 == 0) {
-    int err = munmap(ppmd_model_->HeapStart, mmap_size);
-    if(err != 0) {
-      perror("ppmd: munmap");
-      exit(EXIT_FAILURE);
-    }
-    int fd = open(mmap_path, O_RDWR);
-    if (fd < 0) {
-      perror("ppmd: re-open(mmap_path)");
-      exit(EXIT_FAILURE);
-    }
-    ppmd_model_->HeapStart = (byte*) mmap(NULL, mmap_size, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
-    if(ppmd_model_->HeapStart == MAP_FAILED) {
-      perror("ppmd: re-mmap");
-      exit(EXIT_FAILURE);
-    }
-    close(fd);
-  }
+  // NOTE: the original code periodically munmap()'d and re-mmap()'d the PPM
+  // heap here (every 20000 bytes) to push dirty pages to disk. That remap is
+  // unsafe: mmap(NULL, ...) may return a *different* base address, orphaning
+  // every pointer in the sub-allocator (UnitsStart, MaxContext, LoUnit, ...)
+  // and crashing on the next access — observed on both Linux and Windows
+  // (verified via gdb: crash at counter_=20001, MaxContext pointing at the
+  // old, unmapped base). The file-backed MAP_SHARED mapping already lets the
+  // kernel write dirty pages back under memory pressure, so the remap is
+  // removed. This is content-transparent: compressed output is unchanged.
 }
 
 } // namespace PPMD

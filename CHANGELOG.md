@@ -17,6 +17,19 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
 - `CHANGELOG.md` — this file.
 - README: CI badge and a short Development section.
 
+### Fixed
+- `src/models/ppmd.cpp`: removed the periodic PPM heap `munmap`/`mmap`
+  remap (every 20000 bytes). The new `mmap(NULL, ...)` could return a
+  different base address, orphaning every sub-allocator pointer
+  (`UnitsStart`, `MaxContext`, `LoUnit`, `HiUnit`) and segfaulting on the
+  next access. This produced the intermittent Linux crash (~40% of
+  `prof_input/input`, ASLR-dependent; deterministic under gdb at
+  `counter_=20001` with `MaxContext` pointing at the old, unmapped base)
+  and the Windows `re-open(mmap_path): Invalid argument` failure. The
+  file-backed `MAP_SHARED` heap already spills to disk under memory
+  pressure, so the remap was pointless. Content-transparent: compressed
+  output is unchanged.
+
 ### Changed
 - `src/models/ppmd.cpp`: `mmap_to_disk` is now build-configurable via
   `-DMMAP_TO_DISK_DEFAULT=0/1`. Platform defaults are unchanged: `true` on
