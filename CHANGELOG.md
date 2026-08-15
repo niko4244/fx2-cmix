@@ -41,6 +41,12 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
     interleaved same-job comparison cancels drift, giving speedup/regression
     work a stable measurement channel. Informational — the output-identity
     job remains the correctness gate.
+  - **`Benchmark-baseline: <sha>` commit-message override** (benchmark
+    job): mirrors the `Identity-baseline` mechanism — with the override,
+    the same-run A/B compares HEAD against an arbitrary baseline commit
+    instead of the default `HEAD~1`, so one run can measure a whole
+    accumulated change set (e.g. all safe speedups since a pre-optimization
+    tree) against a known-good commit in a single interleaved A/B.
 
 ### Changed
 - **Second gprof pass on the current tree** (`-n` on `prof_input/input2`, via

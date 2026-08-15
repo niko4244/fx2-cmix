@@ -281,11 +281,11 @@ jobs:
   # stable delta for speedup/regression work. Informational only — the
   # output-identity job remains the correctness gate.
   benchmark:
-    name: Wall-clock benchmark (HEAD vs parent, same-run A/B)
+    name: Wall-clock benchmark (HEAD vs baseline, same-run A/B)
     if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-22.04
     steps:
-      - name: Checkout (full history for the parent commit)
+      - name: Checkout (full history for the baseline commit)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -299,17 +299,31 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y make
 
-      - name: Build HEAD and parent
+      # Compare against the parent commit by default, or against an explicit
+      # baseline named in the commit message ("Benchmark-baseline: <sha>") —
+      # mirrors the Identity-baseline override, and lets one same-run A/B
+      # measure a whole accumulated change set against a known-good tree
+      # instead of only the latest commit.
+      - name: Determine comparison baseline
+        run: |
+          set -euo pipefail
+          BASELINE=$(git log -1 --format='%B' | grep -oE '^Benchmark-baseline: [0-9a-f]{7,40}' | awk '{print $2}' || true)
+          if [ -z "$BASELINE" ]; then BASELINE="HEAD~1"; fi
+          echo "baseline=$BASELINE" >> "$GITHUB_ENV"
+          echo "comparing HEAD against $BASELINE"
+
+      - name: Build HEAD and baseline
         run: |
           set -euo pipefail
           make cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
-          git worktree add /tmp/old HEAD~1 2>/dev/null || true
+          git worktree add /tmp/old "$baseline" 2>/dev/null || true
           make -C /tmp/old cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
 
-      # Interleaved timing (HEAD, parent, HEAD, parent) so thermal/co-tenant
-      # drift affects both equally; min-of-2 per binary cancels cold-start.
-      # The delta is informational: shared-runner noise is a few percent, so
-      # treat only large or repeated deltas as significant.
+      # Interleaved timing (HEAD, baseline, HEAD, baseline) so
+      # thermal/co-tenant drift affects both equally; min-of-2 per binary
+      # cancels cold-start. The delta is informational: shared-runner noise
+      # is a few percent, so treat only large or repeated deltas as
+      # significant.
       - name: Interleaved wall-clock A/B on prof_input/input
         run: |
           set -euo pipefail
@@ -328,10 +342,10 @@ jobs:
           o=$(( o1 < o2 ? o1 : o2 ))
           DELTA=$(awk "BEGIN{printf \"%+.1f%%\", ($h-$o)/$o*100}")
           echo "HEAD compression time:    ${h} ms (reps $h1, $h2)"
-          echo "Parent compression time:  ${o} ms (reps $o1, $o2)"
-          echo "delta (HEAD vs parent):   $DELTA  (negative = faster)"
-          printf 'HEAD=%s ms (reps %s,%s)\nPARENT=%s ms (reps %s,%s)\nDELTA=%s\n' \
-            "$h" "$h1" "$h2" "$o" "$o1" "$o2" "$DELTA" > benchmark-report.txt
+          echo "Baseline compression:     ${o} ms (reps $o1, $o2)  [$baseline]"
+          echo "delta (HEAD vs baseline): $DELTA  (negative = faster)"
+          printf 'HEAD=%s ms (reps %s,%s)\nBASELINE=%s ms (reps %s,%s) [%s]\nDELTA=%s\n' \
+            "$h" "$h1" "$h2" "$o" "$o1" "$o2" "$baseline" "$DELTA" > benchmark-report.txt
           echo "report written to benchmark-report.txt"
 
       - name: Upload benchmark report
