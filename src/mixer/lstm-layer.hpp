@@ -252,9 +252,11 @@ inline void LstmLayer::ForwardPass(NeuronLayer& neurons,
     const float xv = SumRevProduct(nx, nx, num_cells_) / (float)num_cells_ +
         1e-5f;
     const float r = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(xv)));
+    {
 #pragma clang fp reassociate(off) contract(off)
-    neurons.ivar_[epoch_] =
-        (r * -0.5f) * __builtin_fmaf(r, xv * r, -3.0f);
+      neurons.ivar_[epoch_] =
+          (r * -0.5f) * __builtin_fmaf(r, xv * r, -3.0f);
+    }
   }
   neurons.norm_[epoch_] *= neurons.ivar_[epoch_];
   neurons.state_[epoch_] = neurons.norm_[epoch_] * neurons.gamma_ +
