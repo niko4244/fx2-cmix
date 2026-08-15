@@ -49,6 +49,16 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
     instead of the default `HEAD~1`, so one run can measure a whole
     accumulated change set (e.g. all safe speedups since a pre-optimization
     tree) against a known-good commit in a single interleaved A/B.
+  - **Benchmark channel tightened to min-of-3 + per-rep spread**
+    (`6ab23ea`): three interleaved reps per binary (HEAD, baseline, HEAD,
+    baseline, HEAD, baseline) with min-of-3 reported, and each line shows
+    the per-rep spread (max−min, as % of the min) so a run states how
+    noisy it was. If either binary's own reps scatter >5%, the report
+    flags the delta as not reliable below ~5% — the channel now
+    self-audits instead of silently presenting a noisy number as truth.
+    Revalidation on identical code (CHANGELOG-only pushes): the first
+    probe measured **-1.2%** with a flagged 7.4% HEAD spread — see below
+    for the second probe's result.
   - **Benchmark default path validated**: the `1a792fa` push exercised the
     no-override fallback end-to-end (no grep-under-`set -euo pipefail`
     trap, unlike the identity job's pre-fix bug) and measured **-0.6%**

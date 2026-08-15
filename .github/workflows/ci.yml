@@ -349,11 +349,18 @@ jobs:
           HSP=$(awk "BEGIN{printf \"%d ms (%.1f%%)\", $((hmax-h)), ($hmax-$h)/$h*100}")
           OSP=$(awk "BEGIN{printf \"%d ms (%.1f%%)\", $((omax-o)), ($omax-$o)/$o*100}")
           DELTA=$(awk "BEGIN{printf \"%+.1f%%\", ($h-$o)/$o*100}")
+          # If a binary's own reps scatter >5%, a ~1-2% delta cannot be
+          # meaningfully resolved on this run — say so in the report.
+          if [ $((hmax-h)) -gt $((h/20)) ] || [ $((omax-o)) -gt $((o/20)) ]; then
+            FLAG=" (high rep spread — delta not reliable below ~5%)"
+          else
+            FLAG=""
+          fi
           echo "HEAD compression time:    ${h} ms (reps $h1, $h2, $h3; spread $HSP)"
           echo "Baseline compression:     ${o} ms (reps $o1, $o2, $o3; spread $OSP)  [$baseline]"
-          echo "delta (HEAD vs baseline): $DELTA  (negative = faster)"
-          printf 'HEAD=%s ms (reps %s,%s,%s; spread %s)\nBASELINE=%s ms (reps %s,%s,%s; spread %s) [%s]\nDELTA=%s\n' \
-            "$h" "$h1" "$h2" "$h3" "$HSP" "$o" "$o1" "$o2" "$o3" "$OSP" "$baseline" "$DELTA" > benchmark-report.txt
+          echo "delta (HEAD vs baseline): $DELTA  (negative = faster)$FLAG"
+          printf 'HEAD=%s ms (reps %s,%s,%s; spread %s)\nBASELINE=%s ms (reps %s,%s,%s; spread %s) [%s]\nDELTA=%s%s\n' \
+            "$h" "$h1" "$h2" "$h3" "$HSP" "$o" "$o1" "$o2" "$o3" "$OSP" "$baseline" "$DELTA" "$FLAG" > benchmark-report.txt
           echo "report written to benchmark-report.txt"
 
       - name: Upload benchmark report
