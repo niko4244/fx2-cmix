@@ -15,7 +15,9 @@ Prize awarded on October 8, 2024. http://prize.hutter1.net/
   round-trip-tests on Linux (clang-17) and Windows (MinGW clang). A
   round-trip test compresses and decompresses `prof_input/input` and checks
   the result is byte-identical — both with no preprocessing (`-n`) and with
-  the full preprocess + dictionary path (`-c`/`-d`).
+  the full preprocess + dictionary path (`-c`/`-d`). Builds use
+  `MARCH=core-avx2` (`fxcmv1.cpp` needs AVX2; a fixed march keeps output
+  reproducible).
 * **mmap_to_disk**: PPM can back its heap with a memory-mapped temp file
   (`true`) or RAM (`false`). It is `true` on Linux by default and `false` on
   Windows until the `mman_shim.h` shim is validated at full scale. Override

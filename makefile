@@ -17,6 +17,14 @@ $(info native used)
 endif
 endif
 
+# Explicit microarchitecture override (e.g. MARCH=core-avx2 for reproducible
+# CI builds); removes any -march chosen by COREI7/ZEN2/native detection.
+ifdef MARCH
+$(info MARCH=$(MARCH) defined)
+CPPFLAGS_PART-THAT-SHOULD-BE-FAST := $(filter-out -march=%,$(CPPFLAGS_PART-THAT-SHOULD-BE-FAST))
+CPPFLAGS_PART-THAT-SHOULD-BE-FAST += -march=$(MARCH)
+endif
+
 CPPFLAGS_PART-THAT-CAN-BE-SLOW    := $(CPPFLAGS_PART-THAT-SHOULD-BE-FAST)
 CPPFLAGS_PART-THAT-CAN-BE-SLOW    += -Os -fdata-sections -ffunction-sections
 CPPFLAGS_PART-THAT-SHOULD-BE-FAST += -O3 -fdata-sections -ffunction-sections

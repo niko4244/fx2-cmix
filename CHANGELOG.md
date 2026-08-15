@@ -22,6 +22,10 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
   `-DMMAP_TO_DISK_DEFAULT=0/1`. Platform defaults are unchanged: `true` on
   Linux (submission default), `false` on Windows (pending full-scale
   validation of `mman_shim.h`).
+- `makefile`: new `MARCH=<cpu>` override (e.g. `MARCH=core-avx2`) that
+  replaces the `-march` chosen by the COREI7/ZEN2/native detection. CI uses
+  `core-avx2` because `fxcmv1.cpp` requires AVX2 and a fixed march keeps
+  compressed output reproducible across runners.
 
 ## [1.0.0] — 2024-10-08 — Hutter Prize submission
 

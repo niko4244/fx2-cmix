@@ -23,11 +23,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y upx-ucl make
 
+      # core-avx2 (Haswell) is the CI baseline: fxcmv1.cpp needs AVX2, and a
+      # fixed march keeps compressed output reproducible across runner models.
       - name: Build cmix + remap
         run: |
           set -euo pipefail
-          make cmix COREI7=1 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
-          make remap COREI7=1 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000"
+          make cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
+          make remap MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000"
 
       - name: Round-trip test — no preprocessing (-n)
         run: |
@@ -59,6 +61,7 @@ jobs:
           msystem: MINGW64
           update: false
           install: >-
+            make
             mingw-w64-x86_64-clang
             mingw-w64-x86_64-make
             mingw-w64-x86_64-gcc-libs
@@ -66,7 +69,7 @@ jobs:
 
       - name: Build cmix (default flags)
         run: |
-          make cmix CC=clang++ COREI7=1 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
+          make cmix CC=clang++ MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
 
       - name: Round-trip tests — default build (mmap_to_disk off on Windows)
         run: |
@@ -83,7 +86,7 @@ jobs:
       - name: Rebuild with mmap_to_disk forced on (exercises mman_shim.h)
         run: |
           make clean
-          make cmix CC=clang++ COREI7=1 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000 -DMMAP_TO_DISK_DEFAULT=true" -j2
+          make cmix CC=clang++ MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000 -DMMAP_TO_DISK_DEFAULT=true" -j2
 
       - name: Round-trip test — mmap shim build
         run: |
