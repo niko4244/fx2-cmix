@@ -862,12 +862,25 @@ union  E {  // hash element, 64 bytes
   if (chk[last&15]==ch) return &bh[last&15][0];
   int b=0xffff, bi=0;
 
+  // A is a template constant, so the scan has a fixed trip count; let clang
+  // unroll it (codegen-only hint, semantics unchanged). The scan must keep
+  // its exact order: tie-breaking between equal-priority slots picks the
+  // first found, so reordering the probe would change which slot is
+  // replaced and alter compressed output.
+#pragma clang loop unroll(enable)
   for (int i=0; i<A; ++i) {
     if (chk[i]==ch) return last=last<<4|i, (U8*)&bh[i][0];
     int pri=bh[i][0];
     if (pri<b && (last&15)!=i && last>>4!=i) b=pri, bi=i;
   }
-  return last=last<<4|bi|keep, chk[bi]=ch, (U8*)memset(&bh[bi][0], 0, 7);
+  // Miss: replace the lowest-priority candidate. Zero the 7-byte bit
+  // history with direct stores (identical to the previous constant-size
+  // memset, without depending on libc inlining).
+  last=last<<4|bi|keep;
+  chk[bi]=ch;
+  U8* p=&bh[bi][0];
+  p[0]=0; p[1]=0; p[2]=0; p[3]=0; p[4]=0; p[5]=0; p[6]=0;
+  return p;
 }
     
 };
@@ -1313,12 +1326,25 @@ union  E1 {  // hash element, 64 bytes
   if (chk[last&15]==ch) return &bh[last&15][0];
   int b=0xffff, bi=0;
 
+  // A is a template constant, so the scan has a fixed trip count; let clang
+  // unroll it (codegen-only hint, semantics unchanged). The scan must keep
+  // its exact order: tie-breaking between equal-priority slots picks the
+  // first found, so reordering the probe would change which slot is
+  // replaced and alter compressed output.
+#pragma clang loop unroll(enable)
   for (int i=0; i<A; ++i) {
     if (chk[i]==ch) return last=last<<4|i, (U8*)&bh[i][0];
     int pri=bh[i][0];
     if (pri<b && (last&15)!=i && last>>4!=i) b=pri, bi=i;
   }
-  return last=last<<4|bi|keep, chk[bi]=ch, (U8*)memset(&bh[bi][0], 0, 7);
+  // Miss: replace the lowest-priority candidate. Zero the 7-byte bit
+  // history with direct stores (identical to the previous constant-size
+  // memset, without depending on libc inlining).
+  last=last<<4|bi|keep;
+  chk[bi]=ch;
+  U8* p=&bh[bi][0];
+  p[0]=0; p[1]=0; p[2]=0; p[3]=0; p[4]=0; p[5]=0; p[6]=0;
+  return p;
 }
     
 };
