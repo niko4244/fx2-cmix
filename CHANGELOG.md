@@ -47,6 +47,12 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
     instead of the default `HEAD~1`, so one run can measure a whole
     accumulated change set (e.g. all safe speedups since a pre-optimization
     tree) against a known-good commit in a single interleaved A/B.
+  - **Benchmark default path validated**: the `1a792fa` push exercised the
+    no-override fallback end-to-end (no grep-under-`set -euo pipefail`
+    trap, unlike the identity job's pre-fix bug) and measured **-0.6%**
+    (15434 vs 15525 ms) between HEAD and its code-identical parent — the
+    channel's own noise floor on identical code, consistent with the
+    earlier +1.5% observation.
 
 ### Changed
 - **Second gprof pass on the current tree** (`-n` on `prof_input/input2`, via
