@@ -112,9 +112,11 @@ void Mixer::Perceive(int bit) {
   if (extra_count > 0) {
     float* __restrict__ extra_weights = &data->extra_weights[0];
     const float* __restrict__ extra_inputs = &extra_inputs_vec_[0];
+    {
 #pragma clang fp contract(off)
-    for (size_t i = 0; i < extra_count; ++i) {
-      extra_weights[i] -= update * extra_inputs[i];
+      for (size_t i = 0; i < extra_count; ++i) {
+        extra_weights[i] -= update * extra_inputs[i];
+      }
     }
   }
  /*if ((data->steps & 1023) == 0) {
