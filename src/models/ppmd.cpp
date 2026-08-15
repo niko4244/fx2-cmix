@@ -33,17 +33,13 @@ typedef unsigned long long qword;
 // mmap_to_disk selects whether PPM backs its heap with a memory-mapped
 // temporary file (true) or plain RAM (false).
 //   * On Linux the mmap path is the proven, submission-tested default.
-//   * On Windows the mman_shim.h Win32 mmap() shim compiles and passes CI
-//     round-trip tests, but is kept off by default until a full-scale enwik9
-//     run confirms it stays within the Hutter Prize RAM/disk budget.
-// Override at build time with -DMMAP_TO_DISK_DEFAULT=0/1 (the Windows CI job
-// builds with =1 to exercise the shim end-to-end).
+//   * On Windows the mman_shim.h Win32 mmap() shim is validated by CI
+//     round-trip tests (both the -n and dictionary paths) and is the default
+//     here too; a full-scale enwik9 run on Windows is still recommended
+//     before any new submission.
+// Override at build time with -DMMAP_TO_DISK_DEFAULT=0/1.
 #ifndef MMAP_TO_DISK_DEFAULT
-#ifdef _WIN32
-#define MMAP_TO_DISK_DEFAULT false
-#else
 #define MMAP_TO_DISK_DEFAULT true
-#endif
 #endif
 bool mmap_to_disk = MMAP_TO_DISK_DEFAULT;
 qword mmap_size;

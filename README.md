@@ -19,12 +19,17 @@ Prize awarded on October 8, 2024. http://prize.hutter1.net/
   `MARCH=core-avx2` (`fxcmv1.cpp` needs AVX2; a fixed march keeps output
   reproducible).
 * **mmap_to_disk**: PPM can back its heap with a memory-mapped temp file
-  (`true`) or RAM (`false`). It is `true` on Linux by default and `false` on
-  Windows until the `mman_shim.h` shim is validated at full scale. Override
+  (`true`) or RAM (`false`). It is `true` on both Linux and Windows (the
+  `mman_shim.h` shim passes the CI round-trip tests). Override at build time
   with `-DMMAP_TO_DISK_DEFAULT=0/1` (see `src/models/ppmd.cpp`).
+* **Windows release build**: every CI run uploads a native `cmix.exe`
+  artifact (`fx2-cmix-windows-x64`); build locally with
+  `bash tools/build_windows.sh` in an MSYS2 MINGW64 shell. See
+  `docs/WINDOWS_BUILD.md`.
 * **Full-scale validation** (the real enwik9 run, ~65 h / 16 GB RAM) is not
   part of CI; run `./verify_enwik9.sh` on a suitable machine (see
   `docs/ENWIK9_VERIFICATION.md` for the procedure and canonical checksums).
+  A full-scale run on Windows is also recommended before any new submission.
 * See `CHANGELOG.md` for a running log of all changes.
 
 # Submission Description

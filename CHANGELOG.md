@@ -43,10 +43,19 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
   output is unchanged.
 
 ### Changed
-- `src/models/ppmd.cpp`: `mmap_to_disk` is now build-configurable via
-  `-DMMAP_TO_DISK_DEFAULT=0/1`. Platform defaults are unchanged: `true` on
-  Linux (submission default), `false` on Windows (pending full-scale
-  validation of `mman_shim.h`).
+- `src/models/ppmd.cpp`: `mmap_to_disk` is now `true` by default on **both**
+  Linux and Windows — the `mman_shim.h` shim passes CI round-trip tests on
+  both the `-n` and dictionary paths. Still overridable at build time with
+  `-DMMAP_TO_DISK_DEFAULT=0/1`; a full-scale enwik9 run on Windows remains
+  recommended before any new submission.
+- Windows CI: single native build (default is now the mmap-backed build)
+  that runs both round-trip tests and uploads `cmix.exe` as the
+  `fx2-cmix-windows-x64` artifact.
+- `tools/build_windows.sh`: scripted native Windows release build (MSYS2
+  MINGW64, clang, `MARCH=core-avx2`, submission SEED); used by CI and
+  documented for local builds.
+- `docs/WINDOWS_BUILD.md`: native Windows build + artifact guide, mmap
+  defaults, and limitations.
 - `makefile`: new `MARCH=<cpu>` override (e.g. `MARCH=core-avx2`) that
   replaces the `-march` chosen by the COREI7/ZEN2/native detection. CI uses
   `core-avx2` because `fxcmv1.cpp` requires AVX2 and a fixed march keeps

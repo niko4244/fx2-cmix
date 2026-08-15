@@ -103,8 +103,9 @@ A rebuilt binary will not necessarily produce a bit-identical *archive*
   it only stops the unsafe periodic `munmap`/`mmap`, so compressed output must
   be unchanged. CI's "PPMd fix output-neutrality" job verifies this on the
   small corpus (identical compressed bytes before/after the fix).
-- `mmap_to_disk` remains `true` by default on Linux (submission behavior) and
-  `false` on Windows pending a full-scale run there.
+- `mmap_to_disk` is `true` by default on both Linux and Windows (the Win32
+  shim passes CI round-trips); a full-scale enwik9 run on Windows is still
+  recommended before any new submission.
 
 ## What CI does and does not cover
 
