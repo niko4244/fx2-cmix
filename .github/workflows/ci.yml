@@ -279,17 +279,20 @@ jobs:
       - name: Dump rodata floats near the LSTM constants
         run: |
           set -euo pipefail
-          echo "===== HEAD rodata 391xx/392xx ====="
-          objdump -s -j .rodata ./cmix | awk '/^ *391/ || /^ *392/ { print }'
+          echo "===== HEAD .rodata (full section: folded FP literals) ====="
+          objdump -s -j .rodata ./cmix
           # Also dump the ORIGINAL (identity-baseline) build's rodata: the
           # LSTM Adam/LayerNorm Newton constants are folded literals whose
           # exact values must be frozen by the reconstruction. The baseline
           # commit carries the pre-reconstruction codegen.
           echo "===== BASELINE a45952b rodata 391xx/392xx ====="
-          git fetch origin a45952b --depth=1
-          git worktree add --detach /tmp/base a45952b
+          # GitHub only accepts full SHAs as fetch refs (abbreviated SHAs are
+          # not refs), so use the full 40-char SHA of the identity baseline.
+          git fetch origin a45952be96eb76cf2930b9da9b3c2536b2c3075a --depth=1
+          git worktree add --detach /tmp/base a45952be96eb76cf2930b9da9b3c2536b2c3075a
           make -C /tmp/base cmix MARCH=core-avx2 DEBUG=1 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
-          objdump -s -j .rodata /tmp/base/cmix | awk '/^ *391/ || /^ *392/ { print }'
+          echo "===== BASELINE a45952b .rodata (full section) ====="
+          objdump -s -j .rodata /tmp/base/cmix
 
       - name: Upload full disassembly
         uses: actions/upload-artifact@v4
