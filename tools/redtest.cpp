@@ -303,7 +303,10 @@ static void chain_case(const char* tag, chainfn oldf, chainfn newf,
 }
 
 // ---- Adam: alpha (t<LIMIT: rsqrt+Newton; else: folded) ----
-// noinline so the disasm job can objdump these and compare their codegen.
+// The disasm job builds this harness with -fno-inline, so every old_*/new_*
+// function compiles standalone (a context-independent instruction-level
+// oracle). The explicit noinline attributes below keep that guarantee even
+// for local builds that omit the flag.
 __attribute__((noinline)) static float old_alpha(float t, float lr) {
   float alpha;
   if (t < UPDATE_LIMIT) {

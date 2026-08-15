@@ -251,14 +251,17 @@ jobs:
       # Decisive experiment: does clang's fast-math v8f32 reduction (the
       # vshufpd/vmovshdup/vaddss tail) compute the true sum? Compile the
       # same dot-product loop both ways with the production flags and print.
-      - name: Test clang-17 reduction semantics
+      - name: Test clang-17 reduction semantics (harness, -fno-inline)
         run: |
           set -euo pipefail
-          clang++-17 -O3 -march=core-avx2 -ffp-model=fast -std=c++17 -DUPDATE_LIMIT=3000 tools/redtest.cpp -o /tmp/redtest
+          # -fno-inline: every old_*/new_* harness function compiles standalone,
+          # so the oracle is context-independent (no inliner-driven FP lowering
+          # differences between runs or between harness and a future edit). The
+          # codegen dump below then verifies each pair at the instruction level.
+          clang++-17 -O3 -march=core-avx2 -ffp-model=fast -fno-inline -std=c++17 -DUPDATE_LIMIT=3000 tools/redtest.cpp -o /tmp/redtest
           /tmp/redtest
-          # The harness's own codegen: how does clang structure the old
-          # valarray-style loop vs the intrinsic reconstruction?
-          objdump -d --no-show-raw-insn -M intel -C /tmp/redtest | awk '/^[0-9a-f]+ <.*>:$/ { sub(/^[0-9a-f]+ </,""); sub(/>:$/,""); if ($0 ~ /matvec/ || $0 ~ /_adam/ || $0 ~ /_alpha/) show=1; else show=0 } show { print }'
+          echo "===== harness codegen: old_* vs new_* (instruction-level oracle) ====="
+          objdump -d --no-show-raw-insn -M intel -C /tmp/redtest | awk '/^[0-9a-f]+ <.*>:$/ { sub(/^[0-9a-f]+ </,""); sub(/>:$/,""); show = ($0 ~ /^old_/ || $0 ~ /^new_/) } show { print }'
 
       - name: Dump LSTM reduction codegen
         run: |
