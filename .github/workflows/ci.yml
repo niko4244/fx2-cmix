@@ -292,12 +292,20 @@ jobs:
           make -C /tmp/base cmix MARCH=core-avx2 DEBUG=1 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
           echo "===== BASELINE a45952b .rodata (full section) ====="
           objdump -s -j .rodata /tmp/base/cmix
+          # The baseline is the PRE-RECONSTRUCTION tree (the identity
+          # baseline): its full disasm is the authoritative oracle for every
+          # reconstructed FP site. Build it with symbols kept so the LSTM
+          # functions can be located by name.
+          echo "===== BASELINE a45952b full disasm ====="
+          objdump -d --no-show-raw-insn -M intel -C /tmp/base/cmix > /tmp/base.dis
 
       - name: Upload full disassembly
         uses: actions/upload-artifact@v4
         with:
           name: lstm-disasm
-          path: /tmp/full.dis
+          path: |
+            /tmp/full.dis
+            /tmp/base.dis
           if-no-files-found: error
           retention-days: 14
 
