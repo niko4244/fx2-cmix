@@ -324,14 +324,14 @@ jobs:
           make -C /tmp/t_ctl cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
           /tmp/t_ctl/cmix -n /tmp/t_ctl/prof_input/input2 /tmp/out_ctl.bin 2>&1 | tail -1
 
-      - name: Build and compress T_A (9efd252: lstm.hpp -> 9dbb702)
+      - name: Build and compress T_A (lstm.hpp to 9dbb702)
         run: |
           set -euo pipefail
           git worktree add /tmp/t_a 9efd252 2>/dev/null || true
           make -C /tmp/t_a cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
           /tmp/t_a/cmix -n /tmp/t_a/prof_input/input2 /tmp/out_ta.bin 2>&1 | tail -1
 
-      - name: Build and compress T_B (a5fba96: lstm-layer.hpp -> 9dbb702)
+      - name: Build and compress T_B (lstm-layer.hpp to 9dbb702)
         run: |
           set -euo pipefail
           git worktree add /tmp/t_b a5fba96 2>/dev/null || true
