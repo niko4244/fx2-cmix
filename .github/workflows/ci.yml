@@ -284,9 +284,13 @@ jobs:
       # production binary inlines the same math into big LSTM functions where
       # fast-math lowering can differ (re-pairing, contraction, vector width).
       # This step cross-checks the standalone FP op stream against the
-      # in-context bodies and WARNS on divergence (register-permutation
-      # differences are invisible here and are handled by the volatile pins
-      # and identity job). Fails only if the machinery breaks.
+      # in-context bodies on two axes: opcode presence (multiset) and
+      # structural-marker ORDERING (rsqrt before its Newton refinement, the
+      # reversed-block permute, the vshufpd/vmovshdup/vaddss reduce tail) so
+      # pairing regressions surface even when the opcode sets match. Register-
+      # permutation / accumulator-slot differences are invisible at this level
+      # and are handled by the volatile pins + identity job. Fails only if the
+      # machinery breaks.
       - name: Compare harness FP codegen vs production in-context
         run: |
           set -euo pipefail

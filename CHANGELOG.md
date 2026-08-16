@@ -78,6 +78,24 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
 
 - **Standalone-vs-in-context FP codegen cross-check**: new `tools/compare_fp_codegen.sh` (run as a step in the disasm job) extracts each `new_*` reconstruction's FP instruction stream from the `-fno-inline` harness disasm and compares it, opcode by opcode, against the production binary's in-context bodies (mapped by symbol: gate matvec/ivar to `LstmLayer::ForwardPass(NeuronLayer&…)`, projection/softmax to `Lstm::Predict`/`Lstm::Perceive`, gate-error chains to the outer `LstmLayer::BackwardPass(…)`, Adam to `LstmLayer::BackwardPass(NeuronLayer&…)`). Divergence prints `WARN` (warn-only: register-permutation differences are invisible at this level and are covered by the volatile pins + identity job); the step fails only if the machinery breaks. Four harness artifacts are codified as documented `NOTE`s (float-vs-int `t` comparison `vucomiss`, and the double-precision `pow` in the folded Adam path that production constant-folds).
 
+  **Structural marker ordering**: the compare step also checks that each
+  reconstruction's distinctive FP-op *sequences* survive in-context
+  inlining, so pairing regressions surface even when the opcode sets
+  match (the multiset check alone is blind to them). Markers verified as
+  in-order subsequences (max gap 16 inlined FP ops): the
+  `vshufpd`/`vmovshdup`/`vaddss` horizontal reduce tail (matvec,
+  projection, sqsum, softmax), the reversed-block permute (sqsum — with
+  alternatives for the fused standalone `vpermps` vs the in-context
+  `vshufps-1b`+`vpermpd-4e` pair, both value-identical reverses), the
+  `vrsqrtss`→Newton `vfmadd213ss` pair (alpha/Adam), the `vrcpss`→
+  `vfnmadd213ss` rcp refinement (Adam), and the `vsubss vmulss vmulss
+  vmulss` chain-4 mul chain. Marking found one real standalone-vs-inlined
+  divergence the multiset check could not express: standalone clang fuses
+  the reverse into `vpermps`, in-context production keeps the unfused
+  `vshufps`+`vpermpd` pair — value-identical, codified as a documented
+  `NOTE`. The `0x` prefix on shuffle immediates is stripped during
+  normalization and comma-glued objdump operands are handled.
+
 ### Added
 - GitHub Actions CI (`.github/workflows/ci.yml`):
   - **Output identity (HEAD vs parent)** job: every push must produce
