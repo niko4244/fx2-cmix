@@ -160,23 +160,88 @@ inline float DotForwardFma(const float* a, const float* b, unsigned int n) {
 inline void Adam(std::valarray<float>* g, std::valarray<float>* m,
     std::valarray<float>* v, std::valarray<float>* w, float learning_rate,
     float t) {
-  const float beta1 = 0.025, beta2 = 0.9999, eps = 1e-6f; 
+  const float beta1 = 0.025, beta2 = 0.9999, eps = 1e-6f;
+  // Reconstructed BY CONSTRUCTION from the emitted clang-17 codegen
+  // (tools/redtest.cpp validates each form):
+  //  - alpha: t < UPDATE_LIMIT -> x = fma(5e-5, t, 1); r = rsqrt(x);
+  //    alpha = ((lr*0.1)*(r*-0.5)) * fma(r, x*r, -3) (the emitted
+  //    vrsqrtss + one-Newton sequence, same constants as the LayerNorm
+  //    ivar). t >= UPDATE_LIMIT -> clang folds 0.1/sqrt(5e-5*LIMIT+1) at
+  //    compile time, so the original expression is kept verbatim (the fold
+  //    is deterministic).
+  //  - m/v updates are elementwise FMAs: m = fma((1-b1), g, m),
+  //    v = fma(g*g, (1-b2), v).
+  //  - pow(beta,t) is emitted as exp2f(t*log2f(beta)) with the log2
+  //    constant folded; the folded literals are frozen below
+  //    (__builtin_log2f of the constants, printed by redtest).
+  //  - the w update: xv = fma(v, inv_den2, eps); r = rsqrt(xv);
+  //    rr = (r*+0.5)*fma(r, xv*r, -3) — NOTE the w-path Newton constant
+  //    is +0.5 (rodata 39220), opposite to the alpha path's -0.5
+  //    (39204): rr ~ -(1/sqrt(xv)), so w + alpha*m*rr matches the
+  //    source's subtraction. Then for t < UPDATE_LIMIT the emitted
+  //    vector path is w = fma(alpha*m, rr*rcp*(...Newton...), w) with
+  //    rcp = rcp_ss(den1) (vrcpps + two refinements); for
+  //    t >= UPDATE_LIMIT the denominator folds to 1 and it is
+  //    w = fma(alpha*m, rr, w).
   float alpha;
   if (t < UPDATE_LIMIT) {
-    alpha = learning_rate * 0.1f / sqrt(5e-5f * t + 1.0f); 
+#pragma clang fp reassociate(off) contract(off)
+    {
+      const float x = __builtin_fmaf(5e-5f, t, 1.0f);
+      const float r = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(x)));
+      alpha = ((learning_rate * 0.1f) * (r * -0.5f)) *
+          __builtin_fmaf(r, x * r, -3.0f);
+    }
   } else {
-    alpha = learning_rate * 0.1f / sqrt(5e-5f * UPDATE_LIMIT + 1.0f); 
+    alpha = learning_rate * 0.1f / sqrt(5e-5f * UPDATE_LIMIT + 1.0f);
   }
-  (*m) *= beta1;
-  (*m) += (1.0f - beta1) * (*g);
-  (*v) *= beta2;
-  (*v) += (1.0f - beta2) * (*g) * (*g);
+  const unsigned int n = (unsigned int)g->size();
+  float* gp = &(*g)[0];
+  float* mp = &(*m)[0];
+  float* vp = &(*v)[0];
+  float* wp = &(*w)[0];
+  for (unsigned int j = 0; j < n; ++j) {
+    mp[j] *= beta1;
+    mp[j] = __builtin_fmaf(1.0f - beta1, gp[j], mp[j]);
+    vp[j] *= beta2;
+    vp[j] = __builtin_fmaf(gp[j] * gp[j], 1.0f - beta2, vp[j]);
+  }
   if (t < UPDATE_LIMIT) {
-    (*w) -= alpha * (((*m) / (float)(1.0f - pow(beta1, t))) /
-        (sqrt((*v) / (float)(1.0f - pow(beta2, t)) + eps)));
+    // __builtin_log2f of the constant beta folds to the exact literal the
+    // original pow->exp2 transform produced (same compiler, same fold);
+    // the folded values are frozen as literals by redtest's FOLD printout.
+    const float den1 = 1.0f - exp2f(t * __builtin_log2f(beta1));
+    const float inv_den2 = 1.0f / (1.0f - exp2f(t * __builtin_log2f(beta2)));
+    const float rcp = _mm_cvtss_f32(_mm_rcp_ss(_mm_set_ss(den1)));
+    for (unsigned int j = 0; j < n; ++j) {
+      const float xv = __builtin_fmaf(vp[j], inv_den2, eps);
+      const float r = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(xv)));
+      // NOTE the +0.5: the w-path Newton constant differs in sign from the
+      // alpha path. With C2=+0.5, C1=-3 the refinement yields the NEGATIVE
+      // reciprocal sqrt, rr ~ -1/sqrt(xv), which turns the emitted
+      // w + alpha*m*rr/den1 into the source's w -= alpha*m/(den1*sqrt) —
+      // the only sign assignment consistent with both the source and the
+      // emitted instructions (the alpha path uses 39204=-0.5; the w path
+      // uses 39220=+0.5, verified from the rodata dump).
+      const float rr = (r * 0.5f) * __builtin_fmaf(r, xv * r, -3.0f);
+      // The emitted reciprocal-of-den1 refinement is
+      // t1 = rr*rcp; t2 = rr*den1 - t1 (vfmsub); q = t1 - t2*rcp
+      // (vfnmadd) — each fma/fmsub is ONE rounding, pinned explicitly.
+      const float t1 = rr * rcp;
+      const float t2 = __builtin_fmaf(rr, den1, -t1);
+      const float q = __builtin_fmaf(-t2, rcp, t1);
+      wp[j] = __builtin_fmaf(alpha * mp[j], q, wp[j]);
+    }
   } else {
-    (*w) -= alpha * (((*m) / (float)(1.0f - pow(beta1, UPDATE_LIMIT))) /
-        (sqrt((*v) / (float)(1.0f - pow(beta2, UPDATE_LIMIT)) + eps)));
+    const float inv_den2 = 1.0f /
+        (float)(1.0f - pow(beta2, UPDATE_LIMIT));
+    for (unsigned int j = 0; j < n; ++j) {
+      const float xv = __builtin_fmaf(vp[j], inv_den2, eps);
+      const float r = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(xv)));
+      // Same +0.5 as above: rr = -(1/sqrt(xv)) refined.
+      const float rr = (r * 0.5f) * __builtin_fmaf(r, xv * r, -3.0f);
+      wp[j] = __builtin_fmaf(alpha * mp[j], rr, wp[j]);
+    }
   }
 }
 
@@ -233,101 +298,18 @@ inline void LstmLayer::ForwardPass(const std::valarray<float>& input, int input_
 
 inline void LstmLayer::ForwardPass(NeuronLayer& neurons,
     const std::valarray<float>& input, int input_symbol) {
-  // The matvec below is reconstructed BY CONSTRUCTION from the exact
-  // instruction sequence clang-17 emits for the original valarray loop at
-  // -O3 -march=core-avx2 -ffp-model=fast (see tools/redtest.cpp and the
-  // disasm job): 4 x 8-lane FMA accumulators over 32-element blocks, the
-  // seed (weights_[i][input_symbol]) fused into accumulator lane 0, then
-  // the horizontal reduce (pair adds, extract128+add, 64-bit-half swap
-  // vshufpd+add, vmovshdup+vaddss), then a scalar FMA tail. Intrinsics are
-  // explicit, so no compiler can reassociate or re-contract them: the FP
-  // operation sequence — and therefore the compressed bytes — is fixed
-  // regardless of compiler version or vectorizer behavior.
-  const int N = (int)input.size();
-  const int M = (N / 32) * 32;
-  const float* in = N > 0 ? &input[0] : nullptr;
   for (unsigned int i = 0; i < num_cells_; ++i) {
-    const float* w = &neurons.weights_[i][0];
-    float f = w[input_symbol];
-    if (N >= 32) {
-      __m256 y0 = _mm256_set_ps(0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, f);
-      __m256 y1 = _mm256_setzero_ps();
-      __m256 y2 = _mm256_setzero_ps();
-      __m256 y3 = _mm256_setzero_ps();
-      for (int b = 0; b < M; b += 32) {
-        y0 = _mm256_fmadd_ps(_mm256_loadu_ps(w + output_size_ + b),
-                             _mm256_loadu_ps(in + b), y0);
-        y1 = _mm256_fmadd_ps(_mm256_loadu_ps(w + output_size_ + b + 8),
-                             _mm256_loadu_ps(in + b + 8), y1);
-        y2 = _mm256_fmadd_ps(_mm256_loadu_ps(w + output_size_ + b + 16),
-                             _mm256_loadu_ps(in + b + 16), y2);
-        y3 = _mm256_fmadd_ps(_mm256_loadu_ps(w + output_size_ + b + 24),
-                             _mm256_loadu_ps(in + b + 24), y3);
-      }
-      // The horizontal reduce must NOT be re-paired. The individual
-      // __m256 adds are commutative (a+b == b+a bit-for-bit), so operand
-      // order within each add is free — but the PARTIAL-SUM TREE is not:
-      // under -ffp-model=fast, clang's backend reassociated the tree here,
-      // pairing (y2+y1),(y3+y0) instead of the emitted loop's
-      // (y1+y0),(y3+y2) — same operations, different rounding, different
-      // bytes. #pragma clang fp reassociate(off) was NOT sufficient in this
-      // context (it held in the standalone harness but the larger function
-      // re-paired anyway — that pairing is encoded in register allocation,
-      // invisible to instruction-level comparisons). The volatile round-trip
-      // makes the two partial sums distinct, memory-pinned values that no
-      // pass can regroup: the tree (y1+y0)+(y3+y2) is fixed by construction.
-      {
-#pragma clang fp reassociate(off) contract(off)
-        __m256 t0 = _mm256_add_ps(y1, y0);
-        __m256 t1 = _mm256_add_ps(y3, y2);
-        volatile __m256 v0 = t0, v1 = t1;
-        __m256 t2 = _mm256_add_ps(v1, v0);
-        __m128 x = _mm_add_ps(_mm256_castps256_ps128(t2),
-                              _mm256_extractf128_ps(t2, 1));
-        x = _mm_add_ps(x, _mm_shuffle_pd(x, x, 0x1));
-        x = _mm_add_ss(x, _mm_movehdup_ps(x));
-        f = _mm_cvtss_f32(x);
-      }
-      // Scalar FMA tail; reassociate(off) keeps it sequential like the
-      // emitted loop (fast-math would otherwise re-tree it).
-      {
-#pragma clang fp reassociate(off) contract(off)
-        for (int j = M; j < N; ++j)
-          f = __builtin_fmaf(w[output_size_ + j], in[j], f);
-      }
-    } else {
-      // Small-input path: the emitted code skips the vector loop entirely.
-      {
-#pragma clang fp reassociate(off) contract(off)
-        for (int j = 0; j < N; ++j)
-          f = __builtin_fmaf(w[output_size_ + j], in[j], f);
-      }
+    float f = neurons.weights_[i][input_symbol];
+    for (unsigned int j = 0; j < input.size(); ++j) {
+      f += input[j] * neurons.weights_[i][output_size_ + j];
     }
     neurons.norm_[epoch_][i] = f;
   }
-  // LayerNorm ivar reconstructed BY CONSTRUCTION. The sum uses the same
-  // reversed-accumulate tree as the emitted (norm_*norm_).sum(); then
-  // 1/sqrt(x) becomes the exact emitted vrsqrtss + one-Newton sequence:
-  // r = rsqrt(x); ivar = (r*-0.5) * fma(r, x*r, -3.0) — the Newton
-  // constants follow uniquely from the target 1/sqrt(x) (C2=-1/2, C1=-3).
-  {
-    const float* nx = &neurons.norm_[epoch_][0];
-    const float xv = SumRevProduct(nx, nx, num_cells_) / (float)num_cells_ +
-        1e-5f;
-    const float r = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(xv)));
-    {
-#pragma clang fp reassociate(off) contract(off)
-      neurons.ivar_[epoch_] =
-          (r * -0.5f) * __builtin_fmaf(r, xv * r, -3.0f);
-    }
-  }
+  neurons.ivar_[epoch_] = 1.0f / sqrt(((neurons.norm_[epoch_] *
+      neurons.norm_[epoch_]).sum() / num_cells_) + 1e-5f);
   neurons.norm_[epoch_] *= neurons.ivar_[epoch_];
-  // state = norm*gamma + beta — elementwise mul+add; pinned as an FMA
-  // (the fast-math contraction, one rounding).
-  for (unsigned int j = 0; j < num_cells_; ++j) {
-    neurons.state_[epoch_][j] = __builtin_fmaf(neurons.norm_[epoch_][j],
-        neurons.gamma_[j], neurons.beta_[j]);
-  }
+  neurons.state_[epoch_] = neurons.norm_[epoch_] * neurons.gamma_ +
+      neurons.beta_;
 }
 
 inline void LstmLayer::ClipGradients(std::valarray<float>* arr) {
