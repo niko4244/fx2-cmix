@@ -384,6 +384,104 @@ jobs:
             && echo "PASS: HEAD and $baseline produce byte-identical compressed output" \
             || { echo "FAIL: compressed output differs from $baseline — revert or fix"; exit 1; }
 
+  # Manual-only wave-4 attribution (workflow_dispatch): pins down WHICH
+  # lstm-layer.hpp reconstruction introduced the identity divergence, with
+  # surgical single-site reverts to the a45952b originals. Waves 1-3 proved
+  # the divergence lives in the e7f8fe3..8d27eb6 delta (ivar, Adam, gate
+  # chains, BP(NeuronLayer), state FMA) and that 9dbb702 (pre-reconstruction)
+  # is a clean methodology control. Each probe below reverts exactly ONE site;
+  # the PASSing probe(s) identify the diverging reconstruction(s). All trees
+  # are built and compared on the SAME runner so the comparison is exact.
+  attribution-wave4:
+    name: Wave-4 attribution (surgical single-site reverts vs a45952b)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout (full history for old commits)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install clang-17, make
+        run: |
+          set -euo pipefail
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 17
+          sudo apt-get update
+          sudo apt-get install -y make
+
+      - name: Build and compress baseline a45952b
+        run: |
+          set -euo pipefail
+          git worktree add /tmp/t_base a45952b 2>/dev/null || true
+          make -C /tmp/t_base cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
+          /tmp/t_base/cmix -n /tmp/t_base/prof_input/input2 /tmp/out_base.bin 2>&1 | tail -1
+
+      - name: Build and compress control 9dbb702 (must PASS)
+        run: |
+          set -euo pipefail
+          git worktree add /tmp/t_ctl 9dbb702 2>/dev/null || true
+          make -C /tmp/t_ctl cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
+          /tmp/t_ctl/cmix -n /tmp/t_ctl/prof_input/input2 /tmp/out_ctl.bin 2>&1 | tail -1
+
+      - name: Build and compress dev tip f6c6e1a (must FAIL)
+        run: |
+          set -euo pipefail
+          git worktree add /tmp/t_dev f6c6e1a 2>/dev/null || true
+          make -C /tmp/t_dev cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
+          /tmp/t_dev/cmix -n /tmp/t_dev/prof_input/input2 /tmp/out_dev.bin 2>&1 | tail -1
+
+      - name: Build and compress P1 ivar-revert (c4b2348)
+        run: |
+          set -euo pipefail
+          git worktree add /tmp/t_p1 c4b2348 2>/dev/null || true
+          make -C /tmp/t_p1 cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
+          /tmp/t_p1/cmix -n /tmp/t_p1/prof_input/input2 /tmp/out_p1.bin 2>&1 | tail -1
+
+      - name: Build and compress P2 adam-revert (7cc3b90)
+        run: |
+          set -euo pipefail
+          git worktree add /tmp/t_p2 7cc3b90 2>/dev/null || true
+          make -C /tmp/t_p2 cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
+          /tmp/t_p2/cmix -n /tmp/t_p2/prof_input/input2 /tmp/out_p2.bin 2>&1 | tail -1
+
+      - name: Build and compress P3 gatechains-revert (8ac2653)
+        run: |
+          set -euo pipefail
+          git worktree add /tmp/t_p3 8ac2653 2>/dev/null || true
+          make -C /tmp/t_p3 cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
+          /tmp/t_p3/cmix -n /tmp/t_p3/prof_input/input2 /tmp/out_p3.bin 2>&1 | tail -1
+
+      - name: Build and compress P4 bpblock-revert (7baddfa)
+        run: |
+          set -euo pipefail
+          git worktree add /tmp/t_p4 7baddfa 2>/dev/null || true
+          make -C /tmp/t_p4 cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
+          /tmp/t_p4/cmix -n /tmp/t_p4/prof_input/input2 /tmp/out_p4.bin 2>&1 | tail -1
+
+      - name: Build and compress P5 statefma-revert (ce4d38f)
+        run: |
+          set -euo pipefail
+          git worktree add /tmp/t_p5 ce4d38f 2>/dev/null || true
+          make -C /tmp/t_p5 cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
+          /tmp/t_p5/cmix -n /tmp/t_p5/prof_input/input2 /tmp/out_p5.bin 2>&1 | tail -1
+
+      - name: Compare all probes against the baseline
+        run: |
+          set -euo pipefail
+          echo "--- control 9dbb702 vs a45952b (methodology, must PASS) ---"
+          cmp /tmp/out_ctl.bin /tmp/out_base.bin && echo "CTL: PASS" || echo "CTL: FAIL (methodology broken)"
+          echo "--- dev tip f6c6e1a vs a45952b (must FAIL) ---"
+          cmp /tmp/out_dev.bin /tmp/out_base.bin && echo "DEV: PASS (nothing to fix!)" || echo "DEV: FAIL (as expected)"
+          for p in p1 p2 p3 p4 p5; do
+            if cmp -s /tmp/out_$p.bin /tmp/out_base.bin; then
+              echo "P$p: PASS -> site reverts to byte-identical (divergence NOT here)"
+            else
+              echo "P$p: FAIL -> site is a divergence source"
+            fi
+          done
+
   # Same-run wall-clock A/B: build HEAD and its parent in one job and time
   # both interleaved on the SAME runner. Cross-run totals on shared runners
   # are too noisy to be useful (measured: 117s vs 125s for byte-identical
