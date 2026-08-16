@@ -219,6 +219,70 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # Manual-only determinism probe (workflow_dispatch): builds the current tree
+  # ONCE and runs the same binary twice on the same runner to prove whether the
+  # compressed output is actually deterministic. The output-identity gate
+  # compares two runs' compressed bytes, so if the SAME binary gives different
+  # bytes on the same runner, the gate can never be reliable regardless of the
+  # reconstruction work. Also rebuilds with mmap_to_disk OFF to attribute the
+  # nondeterminism to the PPMd disk-backed heap or to the model code.
+  determinism-probe:
+    name: Determinism probe (same binary, twice)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install clang-17, make
+        run: |
+          set -euo pipefail
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 17
+          sudo apt-get update
+          sudo apt-get install -y make
+
+      - name: Build HEAD (identity flags, mmap_to_disk default ON)
+        run: |
+          set -euo pipefail
+          make cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
+          md5sum cmix | tee /tmp/build_mmap_on.md5
+
+      - name: Run binary twice with mmap_to_disk ON
+        run: |
+          set -euo pipefail
+          ./cmix -n prof_input/input2 /tmp/mm_a.bin 2>&1 | tail -1
+          ./cmix -n prof_input/input2 /tmp/mm_b.bin 2>&1 | tail -1
+          ls -l /tmp/mm_a.bin /tmp/mm_b.bin
+          cmp /tmp/mm_a.bin /tmp/mm_b.bin \
+            && echo "DETERMINISM: mmap-ON run A == run B (deterministic)" \
+            || { echo "NONDETERMINISM: mmap-ON run A != run B (same binary, same runner)"; exit 1; }
+
+      - name: Rebuild with mmap_to_disk OFF
+        run: |
+          set -euo pipefail
+          make clean
+          make cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000 -DMMAP_TO_DISK_DEFAULT=false" -j2
+          md5sum cmix | tee /tmp/build_mmap_off.md5
+
+      - name: Run binary twice with mmap_to_disk OFF
+        run: |
+          set -euo pipefail
+          ./cmix -n prof_input/input2 /tmp/nm_a.bin 2>&1 | tail -1
+          ./cmix -n prof_input/input2 /tmp/nm_b.bin 2>&1 | tail -1
+          ls -l /tmp/nm_a.bin /tmp/nm_b.bin
+          cmp /tmp/nm_a.bin /tmp/nm_b.bin \
+            && echo "DETERMINISM: mmap-OFF run A == run B (deterministic)" \
+            || { echo "NONDETERMINISM: mmap-OFF run A != run B (same binary, same runner)"; exit 1; }
+
+      - name: Attribute (mmap ON vs OFF, informational)
+        run: |
+          set -euo pipefail
+          cmp /tmp/mm_a.bin /tmp/nm_a.bin \
+            && echo "mmap_to_disk does not change the compressed bytes" \
+            || { echo "mmap_to_disk CHANGES the compressed bytes:"; cmp -l /tmp/mm_a.bin /tmp/nm_a.bin | head -3; }
+
   # Manual-only disassembly of the production Linux codegen (workflow_dispatch):
   # dumps the exact reduction trees the compiler emits for the LSTM loops
   # (vector width, FMA contraction, accumulator count, final combine order,
