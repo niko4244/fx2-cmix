@@ -298,18 +298,101 @@ inline void LstmLayer::ForwardPass(const std::valarray<float>& input, int input_
 
 inline void LstmLayer::ForwardPass(NeuronLayer& neurons,
     const std::valarray<float>& input, int input_symbol) {
+  // The matvec below is reconstructed BY CONSTRUCTION from the exact
+  // instruction sequence clang-17 emits for the original valarray loop at
+  // -O3 -march=core-avx2 -ffp-model=fast (see tools/redtest.cpp and the
+  // disasm job): 4 x 8-lane FMA accumulators over 32-element blocks, the
+  // seed (weights_[i][input_symbol]) fused into accumulator lane 0, then
+  // the horizontal reduce (pair adds, extract128+add, 64-bit-half swap
+  // vshufpd+add, vmovshdup+vaddss), then a scalar FMA tail. Intrinsics are
+  // explicit, so no compiler can reassociate or re-contract them: the FP
+  // operation sequence — and therefore the compressed bytes — is fixed
+  // regardless of compiler version or vectorizer behavior.
+  const int N = (int)input.size();
+  const int M = (N / 32) * 32;
+  const float* in = N > 0 ? &input[0] : nullptr;
   for (unsigned int i = 0; i < num_cells_; ++i) {
-    float f = neurons.weights_[i][input_symbol];
-    for (unsigned int j = 0; j < input.size(); ++j) {
-      f += input[j] * neurons.weights_[i][output_size_ + j];
+    const float* w = &neurons.weights_[i][0];
+    float f = w[input_symbol];
+    if (N >= 32) {
+      __m256 y0 = _mm256_set_ps(0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, f);
+      __m256 y1 = _mm256_setzero_ps();
+      __m256 y2 = _mm256_setzero_ps();
+      __m256 y3 = _mm256_setzero_ps();
+      for (int b = 0; b < M; b += 32) {
+        y0 = _mm256_fmadd_ps(_mm256_loadu_ps(w + output_size_ + b),
+                             _mm256_loadu_ps(in + b), y0);
+        y1 = _mm256_fmadd_ps(_mm256_loadu_ps(w + output_size_ + b + 8),
+                             _mm256_loadu_ps(in + b + 8), y1);
+        y2 = _mm256_fmadd_ps(_mm256_loadu_ps(w + output_size_ + b + 16),
+                             _mm256_loadu_ps(in + b + 16), y2);
+        y3 = _mm256_fmadd_ps(_mm256_loadu_ps(w + output_size_ + b + 24),
+                             _mm256_loadu_ps(in + b + 24), y3);
+      }
+      // The horizontal reduce must NOT be re-paired. The individual
+      // __m256 adds are commutative (a+b == b+a bit-for-bit), so operand
+      // order within each add is free — but the PARTIAL-SUM TREE is not:
+      // under -ffp-model=fast, clang's backend reassociated the tree here,
+      // pairing (y2+y1),(y3+y0) instead of the emitted loop's
+      // (y1+y0),(y3+y2) — same operations, different rounding, different
+      // bytes. #pragma clang fp reassociate(off) was NOT sufficient in this
+      // context (it held in the standalone harness but the larger function
+      // re-paired anyway — that pairing is encoded in register allocation,
+      // invisible to instruction-level comparisons). The volatile round-trip
+      // makes the two partial sums distinct, memory-pinned values that no
+      // pass can regroup: the tree (y1+y0)+(y3+y2) is fixed by construction.
+      {
+#pragma clang fp reassociate(off) contract(off)
+        __m256 t0 = _mm256_add_ps(y1, y0);
+        __m256 t1 = _mm256_add_ps(y3, y2);
+        volatile __m256 v0 = t0, v1 = t1;
+        __m256 t2 = _mm256_add_ps(v1, v0);
+        __m128 x = _mm_add_ps(_mm256_castps256_ps128(t2),
+                              _mm256_extractf128_ps(t2, 1));
+        x = _mm_add_ps(x, _mm_shuffle_pd(x, x, 0x1));
+        x = _mm_add_ss(x, _mm_movehdup_ps(x));
+        f = _mm_cvtss_f32(x);
+      }
+      // Scalar FMA tail; reassociate(off) keeps it sequential like the
+      // emitted loop (fast-math would otherwise re-tree it).
+      {
+#pragma clang fp reassociate(off) contract(off)
+        for (int j = M; j < N; ++j)
+          f = __builtin_fmaf(w[output_size_ + j], in[j], f);
+      }
+    } else {
+      // Small-input path: the emitted code skips the vector loop entirely.
+      {
+#pragma clang fp reassociate(off) contract(off)
+        for (int j = 0; j < N; ++j)
+          f = __builtin_fmaf(w[output_size_ + j], in[j], f);
+      }
     }
     neurons.norm_[epoch_][i] = f;
   }
-  neurons.ivar_[epoch_] = 1.0f / sqrt(((neurons.norm_[epoch_] *
-      neurons.norm_[epoch_]).sum() / num_cells_) + 1e-5f);
+  // LayerNorm ivar reconstructed BY CONSTRUCTION. The sum uses the same
+  // reversed-accumulate tree as the emitted (norm_*norm_).sum(); then
+  // 1/sqrt(x) becomes the exact emitted vrsqrtss + one-Newton sequence:
+  // r = rsqrt(x); ivar = (r*-0.5) * fma(r, x*r, -3.0) — the Newton
+  // constants follow uniquely from the target 1/sqrt(x) (C2=-1/2, C1=-3).
+  {
+    const float* nx = &neurons.norm_[epoch_][0];
+    const float xv = SumRevProduct(nx, nx, num_cells_) / (float)num_cells_ +
+        1e-5f;
+    const float r = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(xv)));
+    {
+#pragma clang fp reassociate(off) contract(off)
+      neurons.ivar_[epoch_] =
+          (r * -0.5f) * __builtin_fmaf(r, xv * r, -3.0f);
+    }
+  }
   neurons.norm_[epoch_] *= neurons.ivar_[epoch_];
-  neurons.state_[epoch_] = neurons.norm_[epoch_] * neurons.gamma_ +
-      neurons.beta_;
+  // state = norm*gamma + beta — elementwise mul+add; pinned as an FMA
+  // (the fast-math contraction, one rounding).
+  for (unsigned int j = 0; j < num_cells_; ++j) {
+    neurons.state_[epoch_][j] = __builtin_fmaf(neurons.norm_[epoch_][j],
+        neurons.gamma_[j], neurons.beta_[j]);
+  }
 }
 
 inline void LstmLayer::ClipGradients(std::valarray<float>* arr) {
@@ -328,80 +411,14 @@ inline void LstmLayer::BackwardPass(const std::valarray<float>&input, int epoch,
     stored_error_ += *hidden_error;
   }
 
-  // The four gate-error elementwise chains, reconstructed BY CONSTRUCTION
-  // from the emitted clang-17 codegen (tools/redtest.cpp validates each
-  // form). The emitted associations are: (1) t = (tanh*stored)*state then
-  // out = t - t*state (vfnmadd); (2) t1 = stored*state,
-  // t2 = tanh*tanh - 1 (fmsub), out = fma(-t2, t1, out);
-  // (3) t1 = state_err*ig_state, t2 = in*in, out = fma(-t2, t1, t1);
-  // (4) (((last-in)*state_err)*forget_state)*ig_state. The pure-mul
-  // chains are fully dependent (no pairing freedom), so plain muls under
-  // reassociate(off)+contract(off) reproduce the emitted vmulss exactly
-  // (fmaf(x,y,0) would flip -0 to +0).
-  {
-    const float* t = &tanh_state_[epoch][0];
-    const float* s = &stored_error_[0];
-    const float* gs = &output_gate_.state_[epoch][0];
-    float* o = &output_gate_.error_[0];
-    {
-#pragma clang fp reassociate(off) contract(off)
-      for (unsigned int j = 0; j < num_cells_; ++j) {
-        float p = t[j] * s[j];
-        p = p * gs[j];
-        o[j] = __builtin_fmaf(-p, gs[j], p);
-      }
-    }
-  }
-  {
-    const float* s = &stored_error_[0];
-    const float* gs = &output_gate_.state_[epoch][0];
-    const float* t = &tanh_state_[epoch][0];
-    float* o = &state_error_[0];
-    {
-#pragma clang fp reassociate(off) contract(off)
-      for (unsigned int j = 0; j < num_cells_; ++j) {
-        const float t1 = s[j] * gs[j];
-        const float t2 = __builtin_fmaf(t[j], t[j], -1.0f);
-        o[j] = __builtin_fmaf(-t2, t1, o[j]);
-      }
-    }
-  }
-  {
-    const float* e = &state_error_[0];
-    const float* ig = &input_gate_state_[epoch][0];
-    const float* x = &input_node_.state_[epoch][0];
-    float* o = &input_node_.error_[0];
-    {
-#pragma clang fp reassociate(off) contract(off)
-      for (unsigned int j = 0; j < num_cells_; ++j) {
-        const float t1 = e[j] * ig[j];
-        const float t2 = x[j] * x[j];
-        o[j] = __builtin_fmaf(-t2, t1, t1);
-      }
-    }
-  }
-  {
-    const float* l = &last_state_[epoch][0];
-    const float* x = &input_node_.state_[epoch][0];
-    const float* e = &state_error_[0];
-    const float* f = &forget_gate_.state_[epoch][0];
-    const float* ig = &input_gate_state_[epoch][0];
-    float* o = &forget_gate_.error_[0];
-    {
-#pragma clang fp reassociate(off) contract(off)
-      // Dependent mul chain pinned through volatile round-trips: the
-      // emitted sequence is (((l-x)*e)*f)*ig and fast-math must not be
-      // able to re-pair it into ((l-x)*e)*(f*ig) (which the pragma alone
-      // does not reliably prevent in the big-function context).
-      for (unsigned int j = 0; j < num_cells_; ++j) {
-        float p = l[j] - x[j];
-        volatile float v1 = p * e[j];
-        p = v1 * f[j];
-        volatile float v2 = p;
-        o[j] = v2 * ig[j];
-      }
-    }
-  }
+  output_gate_.error_ = tanh_state_[epoch] * stored_error_ *
+      output_gate_.state_[epoch] * (1.0f - output_gate_.state_[epoch]);
+  state_error_ += stored_error_ * output_gate_.state_[epoch] * (1.0f -
+      (tanh_state_[epoch] * tanh_state_[epoch]));
+  input_node_.error_ = state_error_ * input_gate_state_[epoch] * (1.0f -
+      (input_node_.state_[epoch] * input_node_.state_[epoch]));
+  forget_gate_.error_ = (last_state_[epoch] - input_node_.state_[epoch]) *
+      state_error_ * forget_gate_.state_[epoch] * input_gate_state_[epoch];
 
   *hidden_error = 0;
   if (epoch > 0) {
