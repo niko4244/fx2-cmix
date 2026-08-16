@@ -324,20 +324,29 @@ jobs:
           make -C /tmp/t_ctl cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
           /tmp/t_ctl/cmix -n /tmp/t_ctl/prof_input/input2 /tmp/out_ctl.bin 2>&1 | tail -1
 
-      - name: Build and compress ivar-revert tip (0d84c98)
+      - name: Build and compress T_A (9efd252: lstm.hpp -> 9dbb702)
         run: |
           set -euo pipefail
-          git worktree add /tmp/t_ivar 0d84c98 2>/dev/null || true
-          make -C /tmp/t_ivar cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
-          /tmp/t_ivar/cmix -n /tmp/t_ivar/prof_input/input2 /tmp/out_ivar.bin 2>&1 | tail -1
+          git worktree add /tmp/t_a 9efd252 2>/dev/null || true
+          make -C /tmp/t_a cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
+          /tmp/t_a/cmix -n /tmp/t_a/prof_input/input2 /tmp/out_ta.bin 2>&1 | tail -1
 
-      - name: Compare all three against the baseline
+      - name: Build and compress T_B (a5fba96: lstm-layer.hpp -> 9dbb702)
+        run: |
+          set -euo pipefail
+          git worktree add /tmp/t_b a5fba96 2>/dev/null || true
+          make -C /tmp/t_b cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
+          /tmp/t_b/cmix -n /tmp/t_b/prof_input/input2 /tmp/out_tb.bin 2>&1 | tail -1
+
+      - name: Compare all trees against the baseline
         run: |
           set -euo pipefail
           echo "--- control 9dbb702 vs a45952b (must PASS) ---"
           cmp /tmp/out_ctl.bin /tmp/out_base.bin && echo "CTL: PASS" || echo "CTL: FAIL (methodology broken)"
-          echo "--- ivar-revert tip vs a45952b (the question) ---"
-          cmp /tmp/out_ivar.bin /tmp/out_base.bin && echo "IVAR-REVERT: PASS -> ivar reconstruction is the whole divergence" || echo "IVAR-REVERT: FAIL -> another site still diverges"
+          echo "--- T_A (lstm.hpp reverted) vs a45952b ---"
+          cmp /tmp/out_ta.bin /tmp/out_base.bin && echo "T_A: PASS -> lstm.hpp (Perceive/output/softmax) is the divergence" || echo "T_A: FAIL -> lstm.hpp is neutral"
+          echo "--- T_B (lstm-layer.hpp reverted) vs a45952b ---"
+          cmp /tmp/out_tb.bin /tmp/out_base.bin && echo "T_B: PASS -> lstm-layer.hpp (Adam/SumRevProduct/chains) is the divergence" || echo "T_B: FAIL -> lstm-layer.hpp is neutral"
 
   # Manual-only disassembly of the production Linux codegen (workflow_dispatch):
   # dumps the exact reduction trees the compiler emits for the LSTM loops
