@@ -117,10 +117,15 @@ run_round "1-sqsum" "$TMP/redtest_sqsum.cpp" "^sqsum N=201.*DIFFER" \
 # Replace the whole t<LIMIT rsqrt+Newton block with the plain expression
 # (textually identical to old_alpha), anchored on the unique fmaf x-line
 # (new_adam uses "xv = __builtin_fmaf(...)", so the anchor is unambiguous).
+# The rsqrt+Newton block sits inside an extra "{ ... }" pragma scope
+# whose opening brace must stay balanced: emit the plain expression AND
+# the scope's closing brace (the x-line anchor is unambiguous — new_adam
+# uses "xv = __builtin_fmaf(...)").
 awk '
   /const float x = __builtin_fmaf/ { intamper = 1 }
   intamper && /^    }$/ {
     print "    alpha = lr * 0.1f / sqrtf(5e-5f * t + 1.0f);";
+    print "    }";
     intamper = 0;
     next;
   }
