@@ -60,6 +60,22 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
   confirmed identical across builds). Baseline fetch fixed to use the
   full 40-char SHA (GitHub rejects abbreviated SHAs as refs).
 
+- **Harness expected-failure registry**: `tools/redtest.cpp` now
+  distinguishes documented proxy artifacts from genuine regressions. The
+  standalone `-fno-inline` harness compiles every `old_*` function
+  out-of-line, but production inlines the same math into large functions,
+  so a few cases legitimately DIFFER in the harness even though production
+  is byte-identical: `sqsum N=200`/`N=33` (standalone `(xv*xv).sum()`
+  lowers to a different tree than the inlined `SumRevProduct` at
+  `num_cells_=200`) and `alpha`/`adam t<LIMIT` (standalone `sqrt()`
+  lowers to `vsqrtss+vdivss`, production inlines rsqrt+Newton), plus the
+  `t>=LIMIT` folded Adam w-path proxy gap. Those cases are registered in
+  `kExpectedDiff` with reasons and print `EXPECTED-DIFFER`; the harness
+  exits non-zero on any *unregistered* DIFFER or a registered case that
+  flips BIT-EQUAL (stale entry), so the disasm job fails on a genuine
+  regression instead of relabeling it. Production equivalence remains the
+  identity job's authority.
+
 ### Added
 - GitHub Actions CI (`.github/workflows/ci.yml`):
   - **Output identity (HEAD vs parent)** job: every push must produce

@@ -258,6 +258,9 @@ jobs:
           # so the oracle is context-independent (no inliner-driven FP lowering
           # differences between runs or between harness and a future edit). The
           # codegen dump below then verifies each pair at the instruction level.
+          # redtest exits non-zero on any verdict outside its documented
+          # expected-failure registry (tools/redtest.cpp, kExpectedDiff), so a
+          # genuine regression fails this step instead of being relabeled.
           clang++-17 -O3 -march=core-avx2 -ffp-model=fast -fno-inline -std=c++17 -DUPDATE_LIMIT=3000 tools/redtest.cpp -o /tmp/redtest
           /tmp/redtest
           echo "===== harness codegen: old_* vs new_* (instruction-level oracle) ====="
