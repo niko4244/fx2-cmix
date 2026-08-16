@@ -296,6 +296,22 @@ jobs:
           set -euo pipefail
           bash tools/compare_fp_codegen.sh /tmp/redtest.dis /tmp/full.dis
 
+      # Self-check: prove the two guardrails above actually FIRE on a
+      # broken reconstruction instead of silently passing. Runs deliberately
+      # tampered harnesses on COPIES in /tmp (repo tree untouched): round 1
+      # breaks new_sqsum's reduce tail (0x1 -> 0x0 shuffle), round 2
+      # replaces new_alpha's rsqrt+Newton with the plain 1/sqrtf. Each
+      # round rebuilds the harness, and asserts that redtest exits non-zero
+      # (unregistered DIFFER in round 1, BIT-EQUAL (STALE REGISTRY) on the
+      # registered alpha cases in round 2) and that compare_fp_codegen
+      # prints the tamper-specific WARNs (reduce-tail / rsqrt-newton marker
+      # gone). The step fails if any oracle fails to fire, so the machinery
+      # cannot silently rot.
+      - name: Tamper self-check (oracles must fire)
+        run: |
+          set -euo pipefail
+          bash tools/tamper_selfcheck.sh tools/redtest.cpp /tmp/full.dis
+
       - name: Dump rodata floats near the LSTM constants
         run: |
           set -euo pipefail

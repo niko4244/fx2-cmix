@@ -96,6 +96,21 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
   `NOTE`. The `0x` prefix on shuffle immediates is stripped during
   normalization and comma-glued objdump operands are handled.
 
+- **Deliberate-tamper self-check** (new `tools/tamper_selfcheck.sh`, run
+  as the last step of the disasm job): proves the two guardrails (redtest
+  registry and compare_fp_codegen) actually *fire* on a broken
+  reconstruction instead of silently passing. Two rounds on COPIES of the
+  harness in `/tmp` (repo tree untouched): round 1 breaks `new_sqsum`'s
+  reduce tail (`vshufpd 0x1` → `0x0` shuffle) and asserts redtest exits
+  non-zero with an unregistered `DIFFER` on `sqsum N=201` plus a
+  `reduce-tail` marker `WARN` from the codegen check; round 2 replaces
+  `new_alpha`'s rsqrt+Newton block with the plain `1/sqrtf` expression
+  (bit-identical to `old_alpha`) and asserts the registered `alpha t=1`/
+  `t=100` cases flip to `BIT-EQUAL (STALE REGISTRY)` (redtest exits
+  non-zero) plus `vsqrtss`/`rsqrt-newton` `WARN`s from the codegen check.
+  Any round that fails to apply its tamper or whose oracle fails to fire
+  fails the job, so the verification machinery cannot silently rot.
+
 ### Added
 - GitHub Actions CI (`.github/workflows/ci.yml`):
   - **Output identity (HEAD vs parent)** job: every push must produce
