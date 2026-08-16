@@ -283,6 +283,62 @@ jobs:
             && echo "mmap_to_disk does not change the compressed bytes" \
             || { echo "mmap_to_disk CHANGES the compressed bytes:"; cmp -l /tmp/mm_a.bin /tmp/nm_a.bin | head -3; }
 
+  # Manual-only 3-way attribution (workflow_dispatch): pins down WHICH
+  # reconstruction accounts for the remaining identity divergence. Compares
+  # three trees against the pre-reconstruction baseline a45952b on the SAME
+  # runner: 9dbb702 (the last known-PASS commit — methodology control), the
+  # current dev tip, and the current tip with the ivar reconstruction reverted.
+  # If the control still matches a45952b but the ivar-revert tree matches too,
+  # the ivar reconstruction (introduced by e7f8fe3, the first FAIL) is the
+  # whole story and the later Adam/chains pins were chasing a ghost.
+  attribution:
+    name: Identity attribution (3-way vs a45952b)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout (full history for old commits)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install clang-17, make
+        run: |
+          set -euo pipefail
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 17
+          sudo apt-get update
+          sudo apt-get install -y make
+
+      - name: Build and compress baseline a45952b
+        run: |
+          set -euo pipefail
+          git worktree add /tmp/t_base a45952b 2>/dev/null || true
+          make -C /tmp/t_base cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
+          /tmp/t_base/cmix -n /tmp/t_base/prof_input/input2 /tmp/out_base.bin 2>&1 | tail -1
+
+      - name: Build and compress control 9dbb702 (last known PASS)
+        run: |
+          set -euo pipefail
+          git worktree add /tmp/t_ctl 9dbb702 2>/dev/null || true
+          make -C /tmp/t_ctl cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
+          /tmp/t_ctl/cmix -n /tmp/t_ctl/prof_input/input2 /tmp/out_ctl.bin 2>&1 | tail -1
+
+      - name: Build and compress ivar-revert tip (0d84c98)
+        run: |
+          set -euo pipefail
+          git worktree add /tmp/t_ivar 0d84c98 2>/dev/null || true
+          make -C /tmp/t_ivar cmix MARCH=core-avx2 CFLAGS_DEFINES="-DSEED=923 -DUPDATE_LIMIT=3000" -j2
+          /tmp/t_ivar/cmix -n /tmp/t_ivar/prof_input/input2 /tmp/out_ivar.bin 2>&1 | tail -1
+
+      - name: Compare all three against the baseline
+        run: |
+          set -euo pipefail
+          echo "--- control 9dbb702 vs a45952b (must PASS) ---"
+          cmp /tmp/out_ctl.bin /tmp/out_base.bin && echo "CTL: PASS" || echo "CTL: FAIL (methodology broken)"
+          echo "--- ivar-revert tip vs a45952b (the question) ---"
+          cmp /tmp/out_ivar.bin /tmp/out_base.bin && echo "IVAR-REVERT: PASS -> ivar reconstruction is the whole divergence" || echo "IVAR-REVERT: FAIL -> another site still diverges"
+
   # Manual-only disassembly of the production Linux codegen (workflow_dispatch):
   # dumps the exact reduction trees the compiler emits for the LSTM loops
   # (vector width, FMA contraction, accumulator count, final combine order,
