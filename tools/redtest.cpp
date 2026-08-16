@@ -46,8 +46,10 @@ static const ExpectedDiff kExpectedDiff[] = {
      "alpha path uses rsqrt+Newton (which new_alpha replicates)"},
     {"alpha t=100",
      "same alpha proxy gap (t < UPDATE_LIMIT)"},
-    {"adam t=1",
-     "compounds the alpha t<LIMIT proxy gap into the w update"},
+    // adam t=1 was removed from the registry when the harness's v data was
+    // made realistic (>= 0): with non-negative v the reconstructed Adam is
+    // bit-exact at t=1 (the 1-ulp alpha proxy gap does not survive the
+    // final w rounding), so BIT-EQUAL is the expected verdict.
     {"adam t=100",
      "same alpha t<LIMIT proxy gap propagated through Adam"},
     {"adam t=3000",
