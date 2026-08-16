@@ -264,7 +264,8 @@ jobs:
           clang++-17 -O3 -march=core-avx2 -ffp-model=fast -fno-inline -std=c++17 -DUPDATE_LIMIT=3000 tools/redtest.cpp -o /tmp/redtest
           /tmp/redtest
           echo "===== harness codegen: old_* vs new_* (instruction-level oracle) ====="
-          objdump -d --no-show-raw-insn -M intel -C /tmp/redtest | awk '/^[0-9a-f]+ <.*>:$/ { sub(/^[0-9a-f]+ </,""); sub(/>:$/,""); show = ($0 ~ /^old_/ || $0 ~ /^new_/) } show { print }'
+          objdump -d --no-show-raw-insn -M intel -C /tmp/redtest > /tmp/redtest.dis
+          awk '/^[0-9a-f]+ <.*>:$/ { sub(/^[0-9a-f]+ </,""); sub(/>:$/,""); show = ($0 ~ /^old_/ || $0 ~ /^new_/) } show { print }' /tmp/redtest.dis
 
       - name: Dump LSTM reduction codegen
         run: |
@@ -278,6 +279,18 @@ jobs:
           echo "===== LSTM function bodies (Lstm* symbols) ====="
           awk '/^[0-9a-f]+ <[^>]*>:$/ { in_fn = ($0 ~ /Lstm/) }
                in_fn { print }' /tmp/full.dis
+
+      # Each new_* reconstruction compiles standalone in the harness, but the
+      # production binary inlines the same math into big LSTM functions where
+      # fast-math lowering can differ (re-pairing, contraction, vector width).
+      # This step cross-checks the standalone FP op stream against the
+      # in-context bodies and WARNS on divergence (register-permutation
+      # differences are invisible here and are handled by the volatile pins
+      # and identity job). Fails only if the machinery breaks.
+      - name: Compare harness FP codegen vs production in-context
+        run: |
+          set -euo pipefail
+          bash tools/compare_fp_codegen.sh /tmp/redtest.dis /tmp/full.dis
 
       - name: Dump rodata floats near the LSTM constants
         run: |
