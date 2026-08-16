@@ -543,63 +543,33 @@ inline void LstmLayer::BackwardPass(NeuronLayer& neurons,
       }
     }
   }
-  // All elementwise chains reconstructed BY CONSTRUCTION from the emitted
-  // clang-17 codegen (tools/redtest.cpp validates each form): beta_u_ stays
-  // a plain add; gamma_u_ is an FMA; error_ *= gamma_*ivar_ is the emitted
-  // (ivar*gamma)*error two-mul chain — fully dependent, plain muls pinned
-  // with reassociate(off)+contract(off) reproduce the emitted vmulss
-  // exactly); the .sum() is the reversed tree (SumRevProduct) and
-  // error_ -= (sum/N)*norm is the emitted fnmadd. The transpose matvecs
-  // are the forward zero-seed pattern (DotForwardFma), N=200 -> M=192,
-  // tail 8. update_ += error*input is an elementwise FMA.
-  for (unsigned int j = 0; j < num_cells_; ++j) {
-    neurons.beta_u_[j] += neurons.error_[j];
-    neurons.gamma_u_[j] = __builtin_fmaf(
-        neurons.error_[j], neurons.norm_[epoch][j], neurons.gamma_u_[j]);
-  }
-  {
-    const float ivar_ep = neurons.ivar_[epoch];
-    // (ivar*gamma)*error — fully dependent, no pairing freedom; plain muls
-    // pinned with reassociate(off) (fmaf(x,y,0) would flip -0 to +0).
-    {
-#pragma clang fp reassociate(off) contract(off)
-      for (unsigned int j = 0; j < num_cells_; ++j) {
-        const float t = ivar_ep * neurons.gamma_[j];
-        neurons.error_[j] = t * neurons.error_[j];
-      }
-    }
-  }
-  {
-    const float ssum = SumRevProduct(
-        &neurons.error_[0], &neurons.norm_[epoch][0], num_cells_);
-    const float inv_n = 1.0f / (float)num_cells_;
-    for (unsigned int j = 0; j < num_cells_; ++j) {
-      const float t = ssum * neurons.norm_[epoch][j];
-      neurons.error_[j] = __builtin_fmaf(-t, inv_n, neurons.error_[j]);
-    }
-  }
+  neurons.beta_u_ += neurons.error_;
+  neurons.gamma_u_ += neurons.error_ * neurons.norm_[epoch];
+  neurons.error_ *= neurons.gamma_ * neurons.ivar_[epoch];
+  neurons.error_ -= ((neurons.error_ * neurons.norm_[epoch]).sum() /
+      num_cells_) * neurons.norm_[epoch];
   if (layer > 0) {
     for (unsigned int i = 0; i < num_cells_; ++i) {
-      const float f = DotForwardFma(&neurons.error_[0],
-          &neurons.transpose_[num_cells_ + i][0], num_cells_);
+      float f = 0;
+      for (unsigned int j = 0; j < num_cells_; ++j) {
+        f += neurons.error_[j] * neurons.transpose_[num_cells_ + i][j];
+      }
       (*hidden_error)[i] += f;
     }
   }
   if (epoch > 0) {
     for (unsigned int i = 0; i < num_cells_; ++i) {
-      const float f = DotForwardFma(&neurons.error_[0],
-          &neurons.transpose_[i][0], num_cells_);
+      float f = 0;
+      for (unsigned int j = 0; j < num_cells_; ++j) {
+        f += neurons.error_[j] * neurons.transpose_[i][j];
+      }
       stored_error_[i] += f;
     }
   }
   std::slice slice = std::slice(output_size_, input.size(), 1);
   for (unsigned int i = 0; i < num_cells_; ++i) {
-    const float ei = neurons.error_[i];
-    for (unsigned int j = 0; j < input.size(); ++j) {
-      neurons.update_[i][output_size_ + j] = __builtin_fmaf(
-          ei, input[j], neurons.update_[i][output_size_ + j]);
-    }
-    neurons.update_[i][input_symbol] += ei;
+    neurons.update_[i][slice] += neurons.error_[i] * input;
+    neurons.update_[i][input_symbol] += neurons.error_[i];
   }
   if (epoch == 0) {
     for (unsigned int i = 0; i < num_cells_; ++i) {
