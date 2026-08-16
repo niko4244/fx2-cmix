@@ -394,22 +394,8 @@ inline void LstmLayer::ForwardPass(NeuronLayer& neurons,
     }
     neurons.norm_[epoch_][i] = f;
   }
-  // LayerNorm ivar reconstructed BY CONSTRUCTION. The sum uses the same
-  // reversed-accumulate tree as the emitted (norm_*norm_).sum(); then
-  // 1/sqrt(x) becomes the exact emitted vrsqrtss + one-Newton sequence:
-  // r = rsqrt(x); ivar = (r*-0.5) * fma(r, x*r, -3.0) — the Newton
-  // constants follow uniquely from the target 1/sqrt(x) (C2=-1/2, C1=-3).
-  {
-    const float* nx = &neurons.norm_[epoch_][0];
-    const float xv = SumRevProduct(nx, nx, num_cells_) / (float)num_cells_ +
-        1e-5f;
-    const float r = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(xv)));
-    {
-#pragma clang fp reassociate(off) contract(off)
-      neurons.ivar_[epoch_] =
-          (r * -0.5f) * __builtin_fmaf(r, xv * r, -3.0f);
-    }
-  }
+  neurons.ivar_[epoch_] = 1.0f / sqrt(((neurons.norm_[epoch_] *
+      neurons.norm_[epoch_]).sum() / num_cells_) + 1e-5f);
   neurons.norm_[epoch_] *= neurons.ivar_[epoch_];
   // state = norm*gamma + beta — elementwise mul+add; pinned as an FMA
   // (the fast-math contraction, one rounding).
