@@ -96,6 +96,19 @@ adheres to the Hutter Prize rules of the [Prize](http://prize.hutter1.net/).
   `NOTE`. The `0x` prefix on shuffle immediates is stripped during
   normalization and comma-glued objdump operands are handled.
 
+- **Adam t<LIMIT w-update pinned** (`lstm-layer.hpp` `Adam(...)`): the
+  reciprocal-of-den1 refinement chain `t1 = rr*rcp; t2 = fmaf(rr, den1,
+  -t1); q = fmaf(-t2, rcp, t1)` is now wrapped in
+  `reassociate(off) contract(off)` with `t1`/`t2` routed through volatile
+  round-trips. In the big-function context clang's fast-math had
+  re-associated `t2` into `rr - den1*t1` (rounding `den1*t1` instead of
+  `den1*rr`), the byte-158 divergence that failed the output-identity
+  gate. Isolated by the bisection wave on `dev` (reverting the Adam
+  reconstruction alone makes the output match the baseline again) and by
+  diffing the baseline vs full in-context disassembly of
+  `LstmLayer::BackwardPass(NeuronLayer&)`. Mirrored in
+  `tools/redtest.cpp`'s `new_adam` so the harness stays faithful.
+
 ### Added
 - GitHub Actions CI (`.github/workflows/ci.yml`):
   - **Output identity (HEAD vs parent)** job: every push must produce

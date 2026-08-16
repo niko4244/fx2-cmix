@@ -465,10 +465,18 @@ __attribute__((noinline)) static void new_adam(float* g, float* m,
     const float rr = (r * 0.5f) * __builtin_fmaf(r, xv * r, -3.0f);
     if (t < UPDATE_LIMIT) {
       const float rcp = _mm_cvtss_f32(_mm_rcp_ss(_mm_set_ss(den1)));
-      const float t1 = rr * rcp;
-      const float t2 = __builtin_fmaf(rr, den1, -t1);
-      const float q = __builtin_fmaf(-t2, rcp, t1);
-      w[j] = __builtin_fmaf(alpha * m[j], q, w[j]);
+      // Mirrors the production pin: fast-math re-associated t2 into
+      // rr - den1*t1 in the big-function context, so the chain is pinned
+      // through volatile round-trips + reassociate(off).
+      {
+#pragma clang fp reassociate(off) contract(off)
+        const float t1 = rr * rcp;
+        volatile float vt1 = t1;
+        const float t2 = __builtin_fmaf(rr, den1, -vt1);
+        volatile float vt2 = t2;
+        const float q = __builtin_fmaf(-vt2, rcp, vt1);
+        w[j] = __builtin_fmaf(alpha * m[j], q, w[j]);
+      }
     } else {
       w[j] = __builtin_fmaf(alpha * m[j], rr, w[j]);
     }
