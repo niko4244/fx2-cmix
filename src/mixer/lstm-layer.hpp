@@ -69,37 +69,16 @@ inline float SumRevProduct(const float* a, const float* b, unsigned int n) {
           _mm256_castps_pd(_mm256_shuffle_ps(g2, g2, 0x1b)), 0x4e));
       g3 = _mm256_castpd_ps(_mm256_permute4x64_pd(
           _mm256_castps_pd(_mm256_shuffle_ps(g3, g3, 0x1b)), 0x4e));
-      // The four accumulator chains are independent, so fast-math can
-      // permute WHICH group lands in WHICH slot (observed in-context:
-      // y1/y2/y3 held the wrong groups, changing the partial-sum tree and
-      // the final rounded value). Route each add through a volatile
-      // round-trip so the y0+=g3/y1+=g2/y2+=g1/y3+=g0 mapping is fixed by
-      // construction (same class of bug as the combine re-pairing).
-      {
-#pragma clang fp reassociate(off) contract(off)
-        volatile __m256 v0 = _mm256_add_ps(g3, y0);
-        y0 = v0;
-        volatile __m256 v1 = _mm256_add_ps(g2, y1);
-        y1 = v1;
-        volatile __m256 v2 = _mm256_add_ps(g1, y2);
-        y2 = v2;
-        volatile __m256 v3 = _mm256_add_ps(g0, y3);
-        y3 = v3;
-      }
+      y0 = _mm256_add_ps(g3, y0);
+      y1 = _mm256_add_ps(g2, y1);
+      y2 = _mm256_add_ps(g1, y2);
+      y3 = _mm256_add_ps(g0, y3);
     }
     {
 #pragma clang fp reassociate(off) contract(off)
-      // The combine (((y1+y0)+y2)+y3) is a dependent chain, but fast-math
-      // re-pairs it in the big-function context (the pragma alone does not
-      // hold there — the identity gate caught the same class of bug in the
-      // ForwardPass matvec reduce). Route each partial sum through a
-      // volatile round-trip so no pass can regroup the tree.
-      volatile __m256 v = _mm256_add_ps(y1, y0);
-      __m256 a0 = v;
-      v = _mm256_add_ps(y2, a0);
-      a0 = v;
-      v = _mm256_add_ps(y3, a0);
-      a0 = v;
+      __m256 a0 = _mm256_add_ps(y1, y0);
+      a0 = _mm256_add_ps(y2, a0);
+      a0 = _mm256_add_ps(y3, a0);
       __m128 x = _mm_add_ps(_mm256_castps256_ps128(a0),
                             _mm256_extractf128_ps(a0, 1));
       x = _mm_add_ps(x, _mm_shuffle_pd(x, x, 0x1));
@@ -472,16 +451,11 @@ inline void LstmLayer::BackwardPass(const std::valarray<float>&input, int epoch,
     float* o = &forget_gate_.error_[0];
     {
 #pragma clang fp reassociate(off) contract(off)
-      // Dependent mul chain pinned through volatile round-trips: the
-      // emitted sequence is (((l-x)*e)*f)*ig and fast-math must not be
-      // able to re-pair it into ((l-x)*e)*(f*ig) (which the pragma alone
-      // does not reliably prevent in the big-function context).
       for (unsigned int j = 0; j < num_cells_; ++j) {
         float p = l[j] - x[j];
-        volatile float v1 = p * e[j];
-        p = v1 * f[j];
-        volatile float v2 = p;
-        o[j] = v2 * ig[j];
+        p = p * e[j];
+        p = p * f[j];
+        o[j] = p * ig[j];
       }
     }
   }
