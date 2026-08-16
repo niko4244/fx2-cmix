@@ -435,80 +435,14 @@ inline void LstmLayer::BackwardPass(const std::valarray<float>&input, int epoch,
     stored_error_ += *hidden_error;
   }
 
-  // The four gate-error elementwise chains, reconstructed BY CONSTRUCTION
-  // from the emitted clang-17 codegen (tools/redtest.cpp validates each
-  // form). The emitted associations are: (1) t = (tanh*stored)*state then
-  // out = t - t*state (vfnmadd); (2) t1 = stored*state,
-  // t2 = tanh*tanh - 1 (fmsub), out = fma(-t2, t1, out);
-  // (3) t1 = state_err*ig_state, t2 = in*in, out = fma(-t2, t1, t1);
-  // (4) (((last-in)*state_err)*forget_state)*ig_state. The pure-mul
-  // chains are fully dependent (no pairing freedom), so plain muls under
-  // reassociate(off)+contract(off) reproduce the emitted vmulss exactly
-  // (fmaf(x,y,0) would flip -0 to +0).
-  {
-    const float* t = &tanh_state_[epoch][0];
-    const float* s = &stored_error_[0];
-    const float* gs = &output_gate_.state_[epoch][0];
-    float* o = &output_gate_.error_[0];
-    {
-#pragma clang fp reassociate(off) contract(off)
-      for (unsigned int j = 0; j < num_cells_; ++j) {
-        float p = t[j] * s[j];
-        p = p * gs[j];
-        o[j] = __builtin_fmaf(-p, gs[j], p);
-      }
-    }
-  }
-  {
-    const float* s = &stored_error_[0];
-    const float* gs = &output_gate_.state_[epoch][0];
-    const float* t = &tanh_state_[epoch][0];
-    float* o = &state_error_[0];
-    {
-#pragma clang fp reassociate(off) contract(off)
-      for (unsigned int j = 0; j < num_cells_; ++j) {
-        const float t1 = s[j] * gs[j];
-        const float t2 = __builtin_fmaf(t[j], t[j], -1.0f);
-        o[j] = __builtin_fmaf(-t2, t1, o[j]);
-      }
-    }
-  }
-  {
-    const float* e = &state_error_[0];
-    const float* ig = &input_gate_state_[epoch][0];
-    const float* x = &input_node_.state_[epoch][0];
-    float* o = &input_node_.error_[0];
-    {
-#pragma clang fp reassociate(off) contract(off)
-      for (unsigned int j = 0; j < num_cells_; ++j) {
-        const float t1 = e[j] * ig[j];
-        const float t2 = x[j] * x[j];
-        o[j] = __builtin_fmaf(-t2, t1, t1);
-      }
-    }
-  }
-  {
-    const float* l = &last_state_[epoch][0];
-    const float* x = &input_node_.state_[epoch][0];
-    const float* e = &state_error_[0];
-    const float* f = &forget_gate_.state_[epoch][0];
-    const float* ig = &input_gate_state_[epoch][0];
-    float* o = &forget_gate_.error_[0];
-    {
-#pragma clang fp reassociate(off) contract(off)
-      // Dependent mul chain pinned through volatile round-trips: the
-      // emitted sequence is (((l-x)*e)*f)*ig and fast-math must not be
-      // able to re-pair it into ((l-x)*e)*(f*ig) (which the pragma alone
-      // does not reliably prevent in the big-function context).
-      for (unsigned int j = 0; j < num_cells_; ++j) {
-        float p = l[j] - x[j];
-        volatile float v1 = p * e[j];
-        p = v1 * f[j];
-        volatile float v2 = p;
-        o[j] = v2 * ig[j];
-      }
-    }
-  }
+  output_gate_.error_ = tanh_state_[epoch] * stored_error_ *
+      output_gate_.state_[epoch] * (1.0f - output_gate_.state_[epoch]);
+  state_error_ += stored_error_ * output_gate_.state_[epoch] * (1.0f -
+      (tanh_state_[epoch] * tanh_state_[epoch]));
+  input_node_.error_ = state_error_ * input_gate_state_[epoch] * (1.0f -
+      (input_node_.state_[epoch] * input_node_.state_[epoch]));
+  forget_gate_.error_ = (last_state_[epoch] - input_node_.state_[epoch]) *
+      state_error_ * forget_gate_.state_[epoch] * input_gate_state_[epoch];
 
   *hidden_error = 0;
   if (epoch > 0) {
