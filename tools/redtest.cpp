@@ -507,22 +507,30 @@ static void adam_case(const char* tag, float t, float lr) {
   std::uniform_real_distribution<float> d(-1.f, 1.f);
   for (int j = 0; j < N; ++j) g[j] = d(rng);
   for (int j = 0; j < N; ++j) m1[j] = m2[j] = d(rng);
-  for (int j = 0; j < N; ++j) v1[j] = v2[j] = d(rng);
+  // v is the Adam second moment: in production it is initialized to 0 and
+  // updated as v = beta2*v + (1-beta2)*g^2, so it is always >= 0. Random
+  // values in [-1,1] would go negative and make xv = v/den2 + eps negative
+  // -> rsqrt(NaN), a harness artifact that poisons the w-update verdicts.
+  for (int j = 0; j < N; ++j) {
+    float vv = d(rng);
+    v1[j] = v2[j] = (vv >= 0.f ? vv : -vv);
+  }
   for (int j = 0; j < N; ++j) w1[j] = w2[j] = d(rng);
   old_adam(g, m1, v1, w1, lr, t);
   new_adam(g, m2, v2, w2, lr, t);
-  int diff = 0;
+  // NOTE: diff == -1 means "no difference". Using diff == 0 as the equal
+  // flag is wrong: it also matches "first difference at element 0".
+  int diff = -1;
   for (int j = 0; j < N; ++j)
     if (memcmp(&w1[j], &w2[j], 4) != 0) { diff = j; break; }
   printf("%-14s %s (first w diff @%d: %a vs %a)\n", tag,
-         classify(tag, diff == 0), diff, (double)w1[diff],
-         (double)w2[diff]);
+         classify(tag, diff < 0), diff, (double)w1[diff < 0 ? 0 : diff],
+         (double)w2[diff < 0 ? 0 : diff]);
   expected_note(tag);
-  diff = 0;
+  diff = -1;
   for (int j = 0; j < N; ++j)
     if (memcmp(&m1[j], &m2[j], 4) != 0) { diff = j; break; }
-  printf("%-14s m %s%s\n", tag, diff == 0 ? "BIT-EQUAL" : "DIFFER",
-         diff ? "" : "");
+  printf("%-14s m %s\n", tag, diff < 0 ? "BIT-EQUAL" : "DIFFER");
 }
 
 int main(int argc, char** argv) {
