@@ -160,112 +160,23 @@ inline float DotForwardFma(const float* a, const float* b, unsigned int n) {
 inline void Adam(std::valarray<float>* g, std::valarray<float>* m,
     std::valarray<float>* v, std::valarray<float>* w, float learning_rate,
     float t) {
-  const float beta1 = 0.025, beta2 = 0.9999, eps = 1e-6f;
-  // Reconstructed BY CONSTRUCTION from the emitted clang-17 codegen
-  // (tools/redtest.cpp validates each form):
-  //  - alpha: t < UPDATE_LIMIT -> x = fma(5e-5, t, 1); r = rsqrt(x);
-  //    alpha = ((lr*0.1)*(r*-0.5)) * fma(r, x*r, -3) (the emitted
-  //    vrsqrtss + one-Newton sequence, same constants as the LayerNorm
-  //    ivar). t >= UPDATE_LIMIT -> clang folds 0.1/sqrt(5e-5*LIMIT+1) at
-  //    compile time, so the original expression is kept verbatim (the fold
-  //    is deterministic).
-  //  - m/v updates are elementwise FMAs: m = fma((1-b1), g, m),
-  //    v = fma(g*g, (1-b2), v).
-  //  - pow(beta,t) is emitted as exp2f(t*log2f(beta)) with the log2
-  //    constant folded; the folded literals are frozen below
-  //    (__builtin_log2f of the constants, printed by redtest).
-  //  - the w update: xv = fma(v, inv_den2, eps); r = rsqrt(xv);
-  //    rr = (r*+0.5)*fma(r, xv*r, -3) — NOTE the w-path Newton constant
-  //    is +0.5 (rodata 39220), opposite to the alpha path's -0.5
-  //    (39204): rr ~ -(1/sqrt(xv)), so w + alpha*m*rr matches the
-  //    source's subtraction. Then for t < UPDATE_LIMIT the emitted
-  //    vector path is w = fma(alpha*m, rr*rcp*(...Newton...), w) with
-  //    rcp = rcp_ss(den1) (vrcpps + two refinements); for
-  //    t >= UPDATE_LIMIT the denominator folds to 1 and it is
-  //    w = fma(alpha*m, rr, w).
+  const float beta1 = 0.025, beta2 = 0.9999, eps = 1e-6f; 
   float alpha;
   if (t < UPDATE_LIMIT) {
-#pragma clang fp reassociate(off) contract(off)
-    {
-      const float x = __builtin_fmaf(5e-5f, t, 1.0f);
-      const float r = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(x)));
-      alpha = ((learning_rate * 0.1f) * (r * -0.5f)) *
-          __builtin_fmaf(r, x * r, -3.0f);
-    }
+    alpha = learning_rate * 0.1f / sqrt(5e-5f * t + 1.0f); 
   } else {
-    alpha = learning_rate * 0.1f / sqrt(5e-5f * UPDATE_LIMIT + 1.0f);
+    alpha = learning_rate * 0.1f / sqrt(5e-5f * UPDATE_LIMIT + 1.0f); 
   }
-  const unsigned int n = (unsigned int)g->size();
-  float* gp = &(*g)[0];
-  float* mp = &(*m)[0];
-  float* vp = &(*v)[0];
-  float* wp = &(*w)[0];
-  for (unsigned int j = 0; j < n; ++j) {
-    mp[j] *= beta1;
-    mp[j] = __builtin_fmaf(1.0f - beta1, gp[j], mp[j]);
-    vp[j] *= beta2;
-    vp[j] = __builtin_fmaf(gp[j] * gp[j], 1.0f - beta2, vp[j]);
-  }
+  (*m) *= beta1;
+  (*m) += (1.0f - beta1) * (*g);
+  (*v) *= beta2;
+  (*v) += (1.0f - beta2) * (*g) * (*g);
   if (t < UPDATE_LIMIT) {
-    // __builtin_log2f of the constant beta folds to the exact literal the
-    // original pow->exp2 transform produced (same compiler, same fold);
-    // the folded values are frozen as literals by redtest's FOLD printout.
-    const float den1 = 1.0f - exp2f(t * __builtin_log2f(beta1));
-    const float inv_den2 = 1.0f / (1.0f - exp2f(t * __builtin_log2f(beta2)));
-    const float rcp = _mm_cvtss_f32(_mm_rcp_ss(_mm_set_ss(den1)));
-    // The baseline splits this loop: the 8-wide vectorized blocks use the
-    // rcp-refine chain (vrcpps + t1/t2/q), while the scalar remainder uses
-    // a plain rr/den1 (vdivss). The two forms are NOT value-identical, so
-    // both must be reproduced exactly: putting the rcp chain in the tail
-    // (real length n=457 -> 1 tail element per cell) was the remaining
-    // byte-158 divergence.
-    const unsigned int M = (n / 8) * 8;
-    for (unsigned int j = 0; j < M; ++j) {
-      const float xv = __builtin_fmaf(vp[j], inv_den2, eps);
-      const float r = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(xv)));
-      // NOTE the +0.5: the w-path Newton constant differs in sign from the
-      // alpha path. With C2=+0.5, C1=-3 the refinement yields the NEGATIVE
-      // reciprocal sqrt, rr ~ -1/sqrt(xv), which turns the emitted
-      // w + alpha*m*rr/den1 into the source's w -= alpha*m/(den1*sqrt) —
-      // the only sign assignment consistent with both the source and the
-      // emitted instructions (the alpha path uses 39204=-0.5; the w path
-      // uses 39220=+0.5, verified from the rodata dump).
-      const float rr = (r * 0.5f) * __builtin_fmaf(r, xv * r, -3.0f);
-      // The emitted reciprocal-of-den1 refinement is
-      // t1 = rr*rcp; t2 = den1*t1 - rr (vfmsub231); q = t1 - t2*rcp
-      // (vfnmadd213) — each fma/fmsub is ONE rounding, and the rounded
-      // product is den1*t1 (NOT rr*den1 - t1, which rounds a different
-      // product and was part of the byte-158 divergence). The chain is
-      // pinned through volatile round-trips like the other reconstruction
-      // sites: no pass can regroup the fmaf operand order.
-      {
-#pragma clang fp reassociate(off) contract(off)
-        const float t1 = rr * rcp;
-        volatile float vt1 = t1;
-        const float t2 = __builtin_fmaf(den1, vt1, -rr);
-        volatile float vt2 = t2;
-        const float q = __builtin_fmaf(-vt2, rcp, vt1);
-        wp[j] = __builtin_fmaf(alpha * mp[j], q, wp[j]);
-      }
-    }
-    for (unsigned int j = M; j < n; ++j) {
-      const float xv = __builtin_fmaf(vp[j], inv_den2, eps);
-      const float r = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(xv)));
-      const float rr = (r * 0.5f) * __builtin_fmaf(r, xv * r, -3.0f);
-      // Scalar tail: plain rr/den1 (vdivss), exactly as the baseline
-      // emits — NOT the rcp chain (which would round differently).
-      wp[j] = __builtin_fmaf(alpha * mp[j], rr / den1, wp[j]);
-    }
+    (*w) -= alpha * (((*m) / (float)(1.0f - pow(beta1, t))) /
+        (sqrt((*v) / (float)(1.0f - pow(beta2, t)) + eps)));
   } else {
-    const float inv_den2 = 1.0f /
-        (float)(1.0f - pow(beta2, UPDATE_LIMIT));
-    for (unsigned int j = 0; j < n; ++j) {
-      const float xv = __builtin_fmaf(vp[j], inv_den2, eps);
-      const float r = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(xv)));
-      // Same +0.5 as above: rr = -(1/sqrt(xv)) refined.
-      const float rr = (r * 0.5f) * __builtin_fmaf(r, xv * r, -3.0f);
-      wp[j] = __builtin_fmaf(alpha * mp[j], rr, wp[j]);
-    }
+    (*w) -= alpha * (((*m) / (float)(1.0f - pow(beta1, UPDATE_LIMIT))) /
+        (sqrt((*v) / (float)(1.0f - pow(beta2, UPDATE_LIMIT)) + eps)));
   }
 }
 
