@@ -411,12 +411,8 @@ inline void LstmLayer::ForwardPass(NeuronLayer& neurons,
     }
   }
   neurons.norm_[epoch_] *= neurons.ivar_[epoch_];
-  // state = norm*gamma + beta — elementwise mul+add; pinned as an FMA
-  // (the fast-math contraction, one rounding).
-  for (unsigned int j = 0; j < num_cells_; ++j) {
-    neurons.state_[epoch_][j] = __builtin_fmaf(neurons.norm_[epoch_][j],
-        neurons.gamma_[j], neurons.beta_[j]);
-  }
+  neurons.state_[epoch_] = neurons.norm_[epoch_] * neurons.gamma_ +
+      neurons.beta_;
 }
 
 inline void LstmLayer::ClipGradients(std::valarray<float>* arr) {
