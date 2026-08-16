@@ -457,17 +457,21 @@ __attribute__((noinline)) static void new_adam(float* g, float* m,
     m[j] = __builtin_fmaf((1.0f - beta1), g[j], m[j]);
     v[j] *= beta2;
     v[j] = __builtin_fmaf(g[j] * g[j], (1.0f - beta2), v[j]);
-    const float xv = __builtin_fmaf(v[j], inv_den2, eps);
-    const float r = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(xv)));
-    // +0.5: the w-path Newton constant (rodata 39220) is the negative of
-    // the alpha path's (39204), giving rr ~ -1/sqrt(xv) so the emitted
-    // w + alpha*m*rr equals the source's subtraction.
-    const float rr = (r * 0.5f) * __builtin_fmaf(r, xv * r, -3.0f);
-    if (t < UPDATE_LIMIT) {
-      const float rcp = _mm_cvtss_f32(_mm_rcp_ss(_mm_set_ss(den1)));
-      // Mirrors the production pin: fast-math re-associated t2 into
-      // rr - den1*t1 in the big-function context, so the chain is pinned
-      // through volatile round-trips + reassociate(off).
+  }
+  if (t < UPDATE_LIMIT) {
+    const float rcp = _mm_cvtss_f32(_mm_rcp_ss(_mm_set_ss(den1)));
+    // Mirrors the production split: the 8-wide vectorized blocks use the
+    // rcp-refine chain (pinned through volatile round-trips), the scalar
+    // remainder uses a plain rr/den1 (vdivss) — the two are NOT
+    // value-identical, and the real length n=457 leaves a 1-element tail.
+    const int M = (N / 8) * 8;
+    for (int j = 0; j < M; ++j) {
+      const float xv = __builtin_fmaf(v[j], inv_den2, eps);
+      const float r = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(xv)));
+      // +0.5: the w-path Newton constant (rodata 39220) is the negative
+      // of the alpha path's (39204), giving rr ~ -1/sqrt(xv) so the
+      // emitted w + alpha*m*rr equals the source's subtraction.
+      const float rr = (r * 0.5f) * __builtin_fmaf(r, xv * r, -3.0f);
       {
 #pragma clang fp reassociate(off) contract(off)
         const float t1 = rr * rcp;
@@ -477,7 +481,18 @@ __attribute__((noinline)) static void new_adam(float* g, float* m,
         const float q = __builtin_fmaf(-vt2, rcp, vt1);
         w[j] = __builtin_fmaf(alpha * m[j], q, w[j]);
       }
-    } else {
+    }
+    for (int j = M; j < N; ++j) {
+      const float xv = __builtin_fmaf(v[j], inv_den2, eps);
+      const float r = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(xv)));
+      const float rr = (r * 0.5f) * __builtin_fmaf(r, xv * r, -3.0f);
+      w[j] = __builtin_fmaf(alpha * m[j], rr / den1, w[j]);
+    }
+  } else {
+    for (int j = 0; j < N; ++j) {
+      const float xv = __builtin_fmaf(v[j], inv_den2, eps);
+      const float r = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(xv)));
+      const float rr = (r * 0.5f) * __builtin_fmaf(r, xv * r, -3.0f);
       w[j] = __builtin_fmaf(alpha * m[j], rr, w[j]);
     }
   }

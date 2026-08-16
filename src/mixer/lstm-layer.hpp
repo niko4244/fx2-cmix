@@ -213,7 +213,14 @@ inline void Adam(std::valarray<float>* g, std::valarray<float>* m,
     const float den1 = 1.0f - exp2f(t * __builtin_log2f(beta1));
     const float inv_den2 = 1.0f / (1.0f - exp2f(t * __builtin_log2f(beta2)));
     const float rcp = _mm_cvtss_f32(_mm_rcp_ss(_mm_set_ss(den1)));
-    for (unsigned int j = 0; j < n; ++j) {
+    // The baseline splits this loop: the 8-wide vectorized blocks use the
+    // rcp-refine chain (vrcpps + t1/t2/q), while the scalar remainder uses
+    // a plain rr/den1 (vdivss). The two forms are NOT value-identical, so
+    // both must be reproduced exactly: putting the rcp chain in the tail
+    // (real length n=457 -> 1 tail element per cell) was the remaining
+    // byte-158 divergence.
+    const unsigned int M = (n / 8) * 8;
+    for (unsigned int j = 0; j < M; ++j) {
       const float xv = __builtin_fmaf(vp[j], inv_den2, eps);
       const float r = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(xv)));
       // NOTE the +0.5: the w-path Newton constant differs in sign from the
@@ -228,9 +235,9 @@ inline void Adam(std::valarray<float>* g, std::valarray<float>* m,
       // t1 = rr*rcp; t2 = den1*rr - t1 (vfmsub); q = t1 - t2*rcp
       // (vfnmadd) — each fma/fmsub is ONE rounding. In the big-function
       // context fast-math re-associated t2 into rr - den1*t1 (rounding
-      // den1*t1 instead of den1*rr — the byte-158 divergence), so the
-      // chain is pinned through volatile round-trips like the other
-      // reconstruction sites: no pass can regroup the fmaf operand order.
+      // den1*t1 instead of den1*rr), so the chain is pinned through
+      // volatile round-trips like the other reconstruction sites: no pass
+      // can regroup the fmaf operand order.
       {
 #pragma clang fp reassociate(off) contract(off)
         const float t1 = rr * rcp;
@@ -240,6 +247,14 @@ inline void Adam(std::valarray<float>* g, std::valarray<float>* m,
         const float q = __builtin_fmaf(-vt2, rcp, vt1);
         wp[j] = __builtin_fmaf(alpha * mp[j], q, wp[j]);
       }
+    }
+    for (unsigned int j = M; j < n; ++j) {
+      const float xv = __builtin_fmaf(vp[j], inv_den2, eps);
+      const float r = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(xv)));
+      const float rr = (r * 0.5f) * __builtin_fmaf(r, xv * r, -3.0f);
+      // Scalar tail: plain rr/den1 (vdivss), exactly as the baseline
+      // emits — NOT the rcp chain (which would round differently).
+      wp[j] = __builtin_fmaf(alpha * mp[j], rr / den1, wp[j]);
     }
   } else {
     const float inv_den2 = 1.0f /
