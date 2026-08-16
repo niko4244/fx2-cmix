@@ -232,17 +232,17 @@ inline void Adam(std::valarray<float>* g, std::valarray<float>* m,
       // uses 39220=+0.5, verified from the rodata dump).
       const float rr = (r * 0.5f) * __builtin_fmaf(r, xv * r, -3.0f);
       // The emitted reciprocal-of-den1 refinement is
-      // t1 = rr*rcp; t2 = den1*rr - t1 (vfmsub); q = t1 - t2*rcp
-      // (vfnmadd) — each fma/fmsub is ONE rounding. In the big-function
-      // context fast-math re-associated t2 into rr - den1*t1 (rounding
-      // den1*t1 instead of den1*rr), so the chain is pinned through
-      // volatile round-trips like the other reconstruction sites: no pass
-      // can regroup the fmaf operand order.
+      // t1 = rr*rcp; t2 = den1*t1 - rr (vfmsub231); q = t1 - t2*rcp
+      // (vfnmadd213) — each fma/fmsub is ONE rounding, and the rounded
+      // product is den1*t1 (NOT rr*den1 - t1, which rounds a different
+      // product and was part of the byte-158 divergence). The chain is
+      // pinned through volatile round-trips like the other reconstruction
+      // sites: no pass can regroup the fmaf operand order.
       {
 #pragma clang fp reassociate(off) contract(off)
         const float t1 = rr * rcp;
         volatile float vt1 = t1;
-        const float t2 = __builtin_fmaf(rr, den1, -vt1);
+        const float t2 = __builtin_fmaf(den1, vt1, -rr);
         volatile float vt2 = t2;
         const float q = __builtin_fmaf(-vt2, rcp, vt1);
         wp[j] = __builtin_fmaf(alpha * mp[j], q, wp[j]);

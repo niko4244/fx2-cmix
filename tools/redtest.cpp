@@ -476,7 +476,9 @@ __attribute__((noinline)) static void new_adam(float* g, float* m,
 #pragma clang fp reassociate(off) contract(off)
         const float t1 = rr * rcp;
         volatile float vt1 = t1;
-        const float t2 = __builtin_fmaf(rr, den1, -vt1);
+        // t2 = den1*t1 - rr (the rounded product is den1*t1, matching the
+        // baseline's vfmsub231ss — NOT rr*den1 - t1).
+        const float t2 = __builtin_fmaf(den1, vt1, -rr);
         volatile float vt2 = t2;
         const float q = __builtin_fmaf(-vt2, rcp, vt1);
         w[j] = __builtin_fmaf(alpha * m[j], q, w[j]);
